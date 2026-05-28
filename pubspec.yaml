@@ -1,6 +1,6 @@
 name: json_sentinel
 description: Lightweight runtime JSON key and type validation for Dart. No code generation required.
-version: 0.1.0
+version: 0.1.1
 repository: https://github.com/IgeeTheron/json-sentinel
 issue_tracker: https://github.com/IgeeTheron/json-sentinel/issues
 

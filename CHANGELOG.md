@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-05-28
+
+### Fixed
+- Corrected repository and issue tracker URLs to point to `IgeeTheron/json-sentinel`.
+
 ## [0.1.0] - 2026-05-28
 
 ### Added
@@ -24,4 +29,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fallback logging via `dart:developer` when no logger is configured; suppressed in release builds — always call `configure()` or `silence()` in production code.
 - Zero runtime dependencies — pure Dart, works in Flutter, server, and CLI projects.
 
+[0.1.1]: https://github.com/IgeeTheron/json-sentinel/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/IgeeTheron/json-sentinel/releases/tag/v0.1.0
