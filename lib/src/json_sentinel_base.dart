@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:developer' as developer;
 
 import 'package:json_sentinel/src/json_log_fn.dart';
 import 'package:json_sentinel/src/json_validation_result.dart';
@@ -11,12 +12,21 @@ import 'package:json_sentinel/src/json_validation_result.dart';
 ///
 /// All methods are static; this class cannot be instantiated.
 ///
+/// The fallback logger (used when neither [configure] nor [silence] has been
+/// called) writes to `dart:developer` and is suppressed in release builds —
+/// always call [configure] or [silence] in production code.
+///
+/// Pass `verbose: true` to either [configure] or [silence] to enable
+/// trace-level `dart:developer` logs: a confirmation on initialisation, a
+/// success trace on every passing [validate] call, and a diagnostic when
+/// `jsonEncode` fails. Verbose output is orthogonal to [silence].
+///
 /// ## Quick start
 ///
 /// ```dart
 /// // 1. Wire in your logger once at startup:
 /// JsonSentinel.configure((message, {error, stackTrace, extras, escalate}) {
-///   myLogger.warn(message, stackTrace: stackTrace, extras: extras);
+///   myLogger.warn(message, stackTrace: stackTrace, extras: extras, escalate: escalate ?? false);
 /// });
 ///
 /// // 2. Validate in tryFromJson:
@@ -37,28 +47,51 @@ class JsonSentinel {
   JsonSentinel._();
 
   static JsonLogFn? _logger;
+  static bool _verbose = false;
 
-  /// The configured [JsonLogFn], or `null` if [configure] has not been called.
+  /// The configured [JsonLogFn], or `null` if neither [configure] nor [silence] has been called.
   static JsonLogFn? get logger => _logger;
 
   /// Configures the logger used for all validation failures.
   ///
-  /// Call exactly once at app startup. Asserts in debug mode on a second call.
-  /// In release mode a second call is silently ignored — the first registration
-  /// wins. Tests should call [resetLoggerForTesting] in `tearDown` to allow
-  /// re-configuration across test cases.
-  static void configure(JsonLogFn logFn) {
+  /// Call once at app startup as an alternative to [silence] — never both.
+  /// Asserts in debug mode if called after [configure] or [silence] has already
+  /// been called. In release mode the second call is silently ignored — the
+  /// first registration wins. Tests should call [resetLoggerForTesting] in
+  /// `tearDown` to allow re-configuration across test cases.
+  ///
+  /// Set [verbose] to `true` to enable trace-level `dart:developer` logs:
+  /// a confirmation on initialisation, a success trace on every passing
+  /// [validate] call, and a diagnostic when `jsonEncode` fails in the
+  /// JSON preview. Verbose output is independent of [silence] — the two
+  /// are orthogonal controls.
+  static void configure(JsonLogFn logFn, {bool verbose = false}) {
     assert(
       _logger == null,
-      'JsonSentinel.configure() has already been called. '
+      'JsonSentinel is already initialised — configure() or silence() has already been called. '
       'Call JsonSentinel.resetLoggerForTesting() in tearDown if overriding in tests.',
     );
     if (_logger != null) return;
+    _verbose = verbose;
     _logger = logFn;
+    if (_verbose) developer.log('Logger configured.', name: 'JsonSentinel');
   }
 
-  /// Resets the logger to `null`. For use in tests only.
-  static void resetLoggerForTesting() => _logger = null;
+  /// Resets the logger and verbose flag to their initial state. For use in tests only.
+  static void resetLoggerForTesting() {
+    _logger = null;
+    _verbose = false;
+  }
+
+  /// Suppresses all validation log output.
+  ///
+  /// Call once at startup as a standalone alternative to [configure] — never
+  /// in addition to it. Useful when [validate] is used purely for programmatic
+  /// error access via [JsonValidationResult.errors] and no logging is wanted.
+  ///
+  /// Pass `verbose: true` to enable `dart:developer` trace logs while still
+  /// suppressing the [JsonLogFn]. Verbose output is independent of silencing.
+  static void silence({bool verbose = false}) => configure((_, {error, stackTrace, extras, escalate}) {}, verbose: verbose);
 
   /// Validates [json] against [expectedTypes] and returns a [JsonValidationResult].
   ///
@@ -66,22 +99,24 @@ class JsonSentinel {
   /// per call with every problem listed as a bullet. Returns
   /// [JsonValidationResult.success] when all validations pass.
   ///
-  /// **[expectedTypes]** defines the schema:
-  /// - Keys are the JSON field names.
-  /// - Values are lists of allowed types. Including `null` marks the field
-  ///   nullable. A `null` or empty list checks key existence only.
+  /// [expectedTypes] defines the schema. Keys are the JSON field names; values
+  /// are lists of allowed types. Including `null` in the list marks the field
+  /// nullable. A `null` or empty list checks key existence only.
   ///
-  /// **[optional]** — keys listed here are skipped when absent from [json],
-  /// but still type-checked when present. Defaults to `{}`.
+  /// [optional] lists keys that are skipped when absent from [json] but still
+  /// type-checked when present. Defaults to `{}`.
   ///
-  /// **[strict]** — when `true`, keys present in [json] but absent from
+  /// When [strict] is `true`, keys present in [json] but absent from
   /// [expectedTypes] are reported as errors. Defaults to `false`.
   ///
-  /// **[escalate]** — forwarded to the logger as a hint that this failure
-  /// warrants more than a breadcrumb. Defaults to `true`.
+  /// [escalate] is forwarded to the logger as a hint that this failure warrants
+  /// elevated capture (e.g. a Sentry event rather than a breadcrumb).
+  /// Defaults to `false`.
   ///
-  /// **[context]** — identifies the model in log output. Defaults to
-  /// `'UnknownModel'`.
+  /// [context] identifies the model in log output. Defaults to `'UnknownModel'`.
+  ///
+  /// When verbose logging is enabled via [configure] or [silence], a
+  /// `dart:developer` trace is emitted on each passing call.
   ///
   /// Example log output:
   /// ```
@@ -94,7 +129,7 @@ class JsonSentinel {
     required Map<String, List<Type?>?> expectedTypes,
     Set<String> optional = const {},
     bool strict = false,
-    bool escalate = true,
+    bool escalate = false,
     String context = 'UnknownModel',
   }) {
     final StackTrace stackTrace = StackTrace.current;
@@ -150,16 +185,21 @@ class JsonSentinel {
       return JsonValidationResult.failure(errors);
     }
 
+    if (_verbose) {
+      developer.log(
+        '[$context] validate() passed — ${expectedTypes.length} key(s) checked.',
+        name: 'JsonSentinel',
+      );
+    }
     return JsonValidationResult.success;
   }
 
   /// Whether [val] matches [type].
   ///
-  /// - `null` type matches only `null` values.
-  /// - [Map] and [List] match any implementation.
-  /// - Primitives use `is` checks.
-  /// - Unknown types fall back to `runtimeType` equality and trigger an assert
-  ///   in debug mode to prompt adding an explicit `is` check.
+  /// Supported types: `null` (matches only null values), [bool], [int],
+  /// [double], [num], [String], [Map] (any implementation), [List] (any
+  /// implementation). Any other [Type] triggers an assert in debug mode and
+  /// falls back to `runtimeType` equality in release builds.
   static bool _isTypeOf(Object? val, Type? type) {
     if (type == null) return val == null;
 
@@ -184,28 +224,34 @@ class JsonSentinel {
     if (_logger != null) {
       _logger!(message, stackTrace: stackTrace, extras: extras, escalate: escalate);
     } else {
-      // ignore: avoid_print
-      print(message);
+      final buffer = StringBuffer(message);
       if (extras != null && extras.isNotEmpty) {
         for (final MapEntry<String, Object?> entry in extras.entries) {
-          // ignore: avoid_print
-          print('  ${entry.key}: ${entry.value}');
+          buffer.write('\n  ${entry.key}: ${entry.value}');
         }
       }
-      // ignore: avoid_print
-      if (stackTrace != null) print(stackTrace.toString());
+      developer.log(buffer.toString(), name: 'JsonSentinel', stackTrace: stackTrace);
     }
   }
 
   /// Truncated JSON preview (max 600 chars) for structured log extras.
   ///
   /// Falls back to [Map.toString] when [jsonEncode] throws (e.g. [DateTime]).
+  /// Emits a `dart:developer` diagnostic on the fallback path when verbose is enabled.
   static String _jsonPreview(Map<String, dynamic> json) {
     const int maxLen = 600;
     String raw;
     try {
       raw = jsonEncode(json);
-    } catch (_) {
+    } catch (e) {
+      if (_verbose) {
+        developer.log(
+          'json_preview: jsonEncode failed, falling back to toString(). '
+          'Check the validated map for non-serialisable values (e.g. DateTime).',
+          name: 'JsonSentinel',
+          error: e,
+        );
+      }
       raw = json.toString();
     }
     return raw.length <= maxLen ? raw : '${raw.substring(0, maxLen)}…';

@@ -515,7 +515,7 @@ void main() {
 
     // region Escalation — configurable per call.
 
-    test('should pass escalate: true to the logger on failure by default', () {
+    test('should pass escalate: false to the logger on failure by default', () {
       // Act
       JsonSentinel.validate(
         json: {},
@@ -525,7 +525,7 @@ void main() {
       );
 
       // Assert
-      expect(escalations.first, isTrue);
+      expect(escalations.first, isFalse);
     });
 
     test('should pass escalate: false to the logger when explicitly set', () {
@@ -540,6 +540,20 @@ void main() {
 
       // Assert
       expect(escalations.first, isFalse);
+    });
+
+    test('should pass escalate: true to the logger when explicitly set', () {
+      // Act
+      JsonSentinel.validate(
+        json: {},
+        expectedTypes: {
+          'key': [int],
+        },
+        escalate: true,
+      );
+
+      // Assert
+      expect(escalations.first, isTrue);
     });
 
     test('should not invoke the logger on success', () {
@@ -737,6 +751,15 @@ void main() {
       expect(JsonSentinel.logger, isNotNull);
     });
 
+    test('should return non-null from logger getter after silence() is called', () {
+      // Arrange
+      JsonSentinel.resetLoggerForTesting();
+      JsonSentinel.silence();
+
+      // Act & Assert — silence() installs a no-op logger, so getter is non-null
+      expect(JsonSentinel.logger, isNotNull);
+    });
+
     test('should throw AssertionError when configure() is called twice in debug mode', () {
       // Tests always run with asserts enabled, so a second configure() after
       // the one in setUp must throw AssertionError.
@@ -777,6 +800,21 @@ void main() {
     // endregion
 
     // region Edge cases in type matching.
+
+    test('should throw AssertionError when an unsupported type is used in debug mode', () {
+      // _isTypeOf asserts on unknown types; dart test always runs with asserts enabled.
+
+      // Act & Assert
+      expect(
+        () => JsonSentinel.validate(
+          json: {'field': DateTime(2024)},
+          expectedTypes: {
+            'field': [DateTime],
+          },
+        ),
+        throwsA(isA<AssertionError>()),
+      );
+    });
 
     test('should return isValid false when type list is [null] only and value is non-null', () {
       // Act
@@ -1001,6 +1039,150 @@ void main() {
       // Assert
       expect(result.isValid, isTrue);
       expect(logs, isEmpty);
+    });
+
+    // endregion
+
+    // region verbose flag — trace-level developer.log, controlled independently of silence().
+
+    test('should not throw when configure() is called with verbose: true', () {
+      // Arrange
+      JsonSentinel.resetLoggerForTesting();
+
+      // Act & Assert
+      expect(
+        () => JsonSentinel.configure((_, {error, stackTrace, extras, escalate}) {}, verbose: true),
+        returnsNormally,
+      );
+    });
+
+    test('should not throw when silence() is called with verbose: true', () {
+      // Arrange
+      JsonSentinel.resetLoggerForTesting();
+
+      // Act & Assert
+      expect(() => JsonSentinel.silence(verbose: true), returnsNormally);
+    });
+
+    test('should reset verbose state so configure() can be called again after resetLoggerForTesting()', () {
+      // Arrange — configure with verbose, then reset
+      JsonSentinel.resetLoggerForTesting();
+      JsonSentinel.configure((_, {error, stackTrace, extras, escalate}) {}, verbose: true);
+      JsonSentinel.resetLoggerForTesting();
+
+      // Act & Assert — must not assert after reset
+      expect(
+        () => JsonSentinel.configure((_, {error, stackTrace, extras, escalate}) {}),
+        returnsNormally,
+      );
+    });
+
+    test('should return isValid true on a passing validate() call when verbose: true', () {
+      // Arrange
+      JsonSentinel.resetLoggerForTesting();
+      JsonSentinel.configure((_, {error, stackTrace, extras, escalate}) {}, verbose: true);
+
+      // Act
+      final result = JsonSentinel.validate(
+        json: {'key': 1},
+        expectedTypes: {
+          'key': [int],
+        },
+        context: 'VerboseSuccess',
+      );
+
+      // Assert — verbose mode must not alter validation result
+      expect(result.isValid, isTrue);
+    });
+
+    test('should return isValid false on a failing validate() call when verbose: true', () {
+      // Arrange
+      JsonSentinel.resetLoggerForTesting();
+      JsonSentinel.configure((_, {error, stackTrace, extras, escalate}) {}, verbose: true);
+
+      // Act
+      final result = JsonSentinel.validate(
+        json: {},
+        expectedTypes: {
+          'key': [int],
+        },
+        context: 'VerboseFailure',
+      );
+
+      // Assert — verbose mode must not alter validation result
+      expect(result.isValid, isFalse);
+    });
+
+    test('should return isValid false when silence() is called with verbose: true and validation fails', () {
+      // Arrange — silence suppresses the JsonLogFn; verbose only affects developer.log
+      JsonSentinel.resetLoggerForTesting();
+      JsonSentinel.silence(verbose: true);
+
+      // Act
+      final result = JsonSentinel.validate(
+        json: {},
+        expectedTypes: {
+          'key': [int],
+        },
+      );
+
+      // Assert — verbose must not alter the result
+      expect(result.isValid, isFalse);
+    });
+
+    // endregion
+
+    // region silence() — standalone no-op logger.
+
+    test('should return isValid false after silence() is called and validation fails', () {
+      // Arrange — reset so silence() can be called as the sole initialisation.
+      JsonSentinel.resetLoggerForTesting();
+      JsonSentinel.silence();
+
+      // Act
+      final result = JsonSentinel.validate(
+        json: {},
+        expectedTypes: {
+          'key': [int],
+        },
+      );
+
+      // Assert
+      expect(result.isValid, isFalse);
+    });
+
+    test('should not throw when silence() is called and validation fails', () {
+      // Arrange
+      JsonSentinel.resetLoggerForTesting();
+
+      // Act & Assert
+      expect(
+        () {
+          JsonSentinel.silence();
+          JsonSentinel.validate(
+            json: {},
+            expectedTypes: {
+              'key': [int],
+            },
+          );
+        },
+        returnsNormally,
+      );
+    });
+
+    test('should assert when silence() is called after configure() in debug mode', () {
+      // configure() was already called in setUp — a second registration must assert.
+
+      // Act & Assert
+      expect(() => JsonSentinel.silence(), throwsA(isA<AssertionError>()));
+    });
+
+    test('should allow silence() after resetLoggerForTesting()', () {
+      // Arrange
+      JsonSentinel.resetLoggerForTesting();
+
+      // Act & Assert
+      expect(JsonSentinel.silence, returnsNormally);
     });
 
     // endregion

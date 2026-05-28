@@ -34,7 +34,7 @@ void main() {
   }
 
   // Strict mode rejects keys not declared in the schema.
-  // escalate: false treats the failure as a breadcrumb rather than a capture.
+  // escalate defaults to false (breadcrumb); pass escalate: true to trigger a capture.
   final strictJson = <String, dynamic>{'id': 1, 'unexpected': 'surprise'};
 
   JsonSentinel.validate(
@@ -43,7 +43,6 @@ void main() {
       'id': [int],
     },
     strict: true,
-    escalate: false,
     context: 'StrictExample',
   );
 }

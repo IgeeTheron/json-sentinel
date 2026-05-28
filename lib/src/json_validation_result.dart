@@ -13,9 +13,9 @@ class JsonValidationResult {
   /// Whether all validations passed.
   final bool isValid;
 
-  /// Every validation error found, in the order they were detected.
+  /// All validation errors found, in detection order.
   ///
-  /// Empty when [isValid] is `true`. Unmodifiable.
+  /// Always unmodifiable; empty when [isValid] is `true`.
   final List<String> errors;
 
   const JsonValidationResult._({required this.isValid, required this.errors});
