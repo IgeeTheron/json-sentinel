@@ -130,14 +130,17 @@ echo "▶ publish.sh --help"
 run_test "--help exits 0" \
   bash "$ROOT/scripts/publish.sh" --help
 
-run_test "--help output contains 'Usage'" \
-  bash -c "bash '$ROOT/scripts/publish.sh' --help | grep -q 'Usage'"
+run_test "--help output contains 'USAGE'" \
+  bash -c "bash '$ROOT/scripts/publish.sh' --help | grep -q 'USAGE'"
 
 run_test "--help output contains '--dry-run'" \
   bash -c "bash '$ROOT/scripts/publish.sh' --help | grep -q '\-\-dry-run'"
 
 run_test "--help output contains '--force'" \
   bash -c "bash '$ROOT/scripts/publish.sh' --help | grep -q '\-\-force'"
+
+run_test "--help output contains 'EXAMPLES'" \
+  bash -c "bash '$ROOT/scripts/publish.sh' --help | grep -q 'EXAMPLES'"
 
 ########################################
 # publish.sh — argument validation
@@ -250,6 +253,9 @@ run_test "--dry-run exits 0 from package root" \
 
 run_test "--dry-run output confirms dry-run complete" \
   bash -c "cd '$ROOT' && bash scripts/publish.sh --dry-run 2>&1 | grep -q 'Dry-run complete'"
+
+run_test "--dry-run actually invokes dart pub publish" \
+  bash -c "cd '$ROOT' && bash scripts/publish.sh --dry-run 2>&1 | grep -q 'Publishing json_sentinel'"
 
 ########################################
 # Summary

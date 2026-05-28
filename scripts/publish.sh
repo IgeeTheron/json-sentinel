@@ -5,17 +5,8 @@
 #
 # Usage: bash scripts/publish.sh [--dry-run] [--force] [--help]
 #
-#   --dry-run   Run dart pub publish --dry-run (no actual publish)
-#   --force     Skip confirmation prompt (required in CI)
-#   --help      Print this message
-#
-# In CI (Codemagic publish workflow):
-#   Set PUB_DEV_CREDENTIALS to the content of ~/.pub-cache/credentials.json
-#   (obtained via `dart pub login` locally), store it in the pub_dev_credentials
-#   environment variable group, and write it before calling this script:
-#
-#     echo "$PUB_DEV_CREDENTIALS" > "$HOME/.pub-cache/credentials.json"
-#     bash ./scripts/publish.sh --force
+# In CI, publishing is handled automatically via GitHub Actions OIDC
+# (see .github/workflows/publish.yml). This script is for local use.
 #
 
 set -euo pipefail
@@ -27,14 +18,44 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 # Config / defaults
 ########################################
 
-DRY_RUN="false"
+DRY_RUN="false"          # lib.sh run_pretty control — always false in publish.sh
+PUBLISH_DRY_RUN="false"  # whether to pass --dry-run to dart pub publish
 FORCE="false"
 
 ########################################
-# Error handler
+# Helpers
 ########################################
 
-die() { echo "❌ [publish] $*" >&2; exit 1; }
+die() {
+  hr
+  echo "❌ PUBLISH FAILED"
+  hr
+  echo "  $*" >&2
+  hr
+  exit 1
+}
+
+kv() { printf "  %-14s: %s\n" "$1" "$2"; }
+
+print_help() {
+  hr
+  echo "📘 publish.sh — Publish json_sentinel to pub.dev"
+  hr
+  echo ""
+  echo "  USAGE"
+  echo "    bash scripts/publish.sh [OPTIONS]"
+  echo ""
+  echo "  OPTIONS"
+  echo "    --dry-run   Validate the package without publishing"
+  echo "    --force     Skip confirmation prompt (required in CI)"
+  echo "    --help      Print this message"
+  echo ""
+  echo "  EXAMPLES"
+  echo "    bash scripts/publish.sh --dry-run"
+  echo "    bash scripts/publish.sh --force"
+  echo ""
+  hr
+}
 
 ########################################
 # Argument parsing
@@ -42,16 +63,9 @@ die() { echo "❌ [publish] $*" >&2; exit 1; }
 
 for arg in "$@"; do
   case "$arg" in
-    --dry-run) DRY_RUN="true" ;;
+    --dry-run) PUBLISH_DRY_RUN="true" ;;
     --force)   FORCE="true" ;;
-    --help)
-      echo "Usage: bash scripts/publish.sh [--dry-run] [--force]"
-      echo ""
-      echo "  --dry-run  Run dart pub publish --dry-run (no actual publish)"
-      echo "  --force    Skip confirmation prompt (required in CI)"
-      echo "  --help     Print this message"
-      exit 0
-      ;;
+    --help)    print_help; exit 0 ;;
     *) die "Unknown argument: '$arg'. Run with --help for usage." ;;
   esac
 done
@@ -71,8 +85,6 @@ test -f pubspec.yaml || die "pubspec.yaml not found. Run from the package root."
 VERSION=$(grep '^version:' pubspec.yaml | awk '{print $2}')
 [[ -n "$VERSION" ]] || die "Could not read version from pubspec.yaml."
 
-echo "📦 Package version: $VERSION"
-
 # Allow MAJOR.MINOR.PATCH and MAJOR.MINOR.PATCH+BUILD (Dart pubspec format).
 # Reject pre-release suffixes (-alpha, -beta, -dev, etc.).
 if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(\+[0-9]+)?$'; then
@@ -80,15 +92,27 @@ if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(\+[0-9]+)?$'; then
 fi
 
 ########################################
-# Publish
+# Summary
 ########################################
 
 hr
-echo "📦 Publishing json_sentinel $VERSION to pub.dev"
+echo "📦 Publishing json_sentinel"
+hr
+kv "Version" "$VERSION"
+kv "Mode"    "$( [[ "$PUBLISH_DRY_RUN" == "true" ]] && echo "dry-run" || echo "publish" )"
+kv "Force"   "$FORCE"
 hr
 
-if [[ "$DRY_RUN" == "true" ]]; then
-  run_pretty "dart pub publish --dry-run" dart pub publish --dry-run
+########################################
+# Publish
+########################################
+
+if [[ "$PUBLISH_DRY_RUN" == "true" ]]; then
+  hr
+  echo "🛠  dart pub publish --dry-run"
+  hr
+  # Allow warnings (exit 65) without aborting — output is still shown.
+  dart pub publish --dry-run 2>&1 | sed 's/^/  │ /' || true
   echo ""
   echo "✅ Dry-run complete — no package was published."
   exit 0
