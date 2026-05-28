@@ -15,24 +15,28 @@ dart fix --apply .                                    # apply automated fixes
 bash scripts/publish.sh --dry-run                    # pub.dev pre-flight (safe — no publish)
 bash scripts/publish.sh --force                      # publish locally (CI uses OIDC — see publish.yml)
 bash scripts/test_scripts.sh                         # run shell script test suite
+dart run example/json_sentinel_example.dart           # run the example
 ```
 
 ## Architecture
 
 Pure Dart package, zero runtime dependencies. Three source files under `lib/src/`, all re-exported from the `lib/json_sentinel.dart` barrel:
 
-- **`json_sentinel_base.dart`** — `JsonSentinel`, the only class callers interact with. All methods are static; the class cannot be instantiated. Owns `_logger` (global mutable `JsonLogFn?`), `configure()`, `resetLoggerForTesting()`, and `validate()`.
+- **`json_sentinel_base.dart`** — `JsonSentinel`, the only class callers interact with. All methods are static; the class cannot be instantiated. Owns two global mutable fields: `_logger` (`JsonLogFn?`) and `_verbose` (`bool`). Public API: `configure()`, `silence()`, `resetLoggerForTesting()`, `logger` getter, and `validate()`.
 - **`json_validation_result.dart`** — `JsonValidationResult`, returned by `validate()`. Two named constructors: `JsonValidationResult.success` (a `const` singleton) and `JsonValidationResult.failure(errors)`. The `errors` list is always unmodifiable.
 - **`json_log_fn.dart`** — `JsonLogFn` typedef only. Kept separate so consumers can reference the function signature without importing the full library.
 
 ### Key design decisions
 
-- **`_logger` is global mutable state.** Tests install a capturing logger in `setUp` and must call `resetLoggerForTesting()` in `tearDown` to prevent cross-test pollution.
-- **`configure()` dual guard.** An `assert` fires in debug mode (tests always run with asserts) and a `if (_logger != null) return` guard silently prevents overwrite in release builds — first registration wins.
+- **`_logger` and `_verbose` are global mutable state.** Tests install a capturing logger in `setUp` and must call `resetLoggerForTesting()` in `tearDown`. `resetLoggerForTesting()` resets both fields; omitting it in `tearDown` causes cross-test pollution.
+- **`configure()` / `silence()` dual guard.** An `assert` fires in debug mode (tests always run with asserts) and a `if (_logger != null) return` guard silently prevents overwrite in release builds — first registration wins. The assert message names both `configure()` and `silence()` as initialisation paths.
+- **`configure()` and `silence()` are mutually exclusive.** `silence()` delegates to `configure()` with a no-op lambda. Calling both asserts in debug mode. Both accept an optional `verbose: bool` parameter (default `false`).
+- **`verbose` controls all `dart:developer` output independently of `silence()`.** When `true`: emits a confirmation on init, a success trace on every passing `validate()` call, and a diagnostic when `jsonEncode` fails in `_jsonPreview`. `silence()` has no effect on `developer.log` — the two are orthogonal.
+- **Fallback logger uses `dart:developer`, not `print`.** When no logger is configured, `_log` emits via `developer.log(name: 'JsonSentinel')`. This is suppressed in release builds — always call `configure()` or `silence()` in production code.
 - **`validate()` never returns early.** All errors are collected into a list before a single log entry is emitted. This is intentional — callers see the full picture, not just the first failure.
-- **`_isTypeOf` uses explicit dispatch.** Each supported type (`String`, `bool`, `int`, `double`, `num`, `Map`, `List`) has its own `if (type == X) return val is X` branch. Adding a new supported type requires a new branch here; omitting one triggers an `assert` in debug mode and falls back to `runtimeType` equality in release.
-- **`print` fallback.** When no logger is configured, `_log` falls back to `print`. The `// ignore: avoid_print` suppression is intentional — do not remove it.
-- **`json_preview` lives in `extras`, not in the message string.** This keeps the log message human-readable while still passing structured data (context label + truncated JSON) to Sentry/Crashlytics via the `extras` map.
+- **`escalate` defaults to `false`.** Opt-in to elevated capture (e.g. Sentry event vs breadcrumb) per call-site by passing `escalate: true`.
+- **`_isTypeOf` uses explicit dispatch.** Supported types: `null`, `bool`, `int`, `double`, `num`, `String`, `Map`, `List`. Any other `Type` triggers an `assert` in debug mode and falls back to `runtimeType` equality in release. Adding a new supported type requires a new branch here.
+- **`json_preview` lives in `extras`, not in the message string.** This keeps the log message human-readable while still passing structured data (context label + truncated JSON) to Sentry/Crashlytics via the `extras` map. The `error` parameter in `JsonLogFn` is reserved API surface — `validate()` always passes `null` for it.
 
 ## Code Style
 
@@ -69,4 +73,6 @@ setUp(() {
 tearDown(JsonSentinel.resetLoggerForTesting);
 ```
 
-The test for double-`configure()` relies on Dart asserts being active (they always are in `dart test`).
+`resetLoggerForTesting()` must be called in `tearDown` whether the test used `configure()` or `silence()` — both set `_logger` and both must be reset. The `verbose` flag is also reset by `resetLoggerForTesting()`.
+
+The test for double-`configure()` (and double-`silence()`) relies on Dart asserts being active (they always are in `dart test`).

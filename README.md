@@ -17,6 +17,8 @@ catching malformed API responses early with a single, readable log entry per fai
 - Structured `json_preview` and `context` passed as extras for searchable Sentry/Crashlytics context
 - Configurable `escalate` flag per call — control whether a failure is a breadcrumb or a capture
 - Returns `JsonValidationResult` with `isValid` + programmatic `errors` list
+- `silence()` for pure programmatic use with no log output
+- Optional `verbose: true` for debug-mode traces via `dart:developer`
 - Zero runtime dependencies — pure Dart, works in Flutter, server, and CLI
 
 ## Getting started
@@ -31,18 +33,32 @@ dependencies:
 ### 1. Wire in your logger once at startup
 
 ```dart
-JsonSentinel.configure((message, {error, stackTrace, extras, escalate}) {
-  // Forward to whatever logging solution you use:
-  myLogger.warn(
-    message,
-    stackTrace: stackTrace,
-    extras: extras,
-    escalate: escalate ?? false,
-  );
-});
+JsonSentinel.configure(
+  (message, {error, stackTrace, extras, escalate}) {
+    // escalate: true → full capture; false → breadcrumb
+    if (escalate == true) {
+      Sentry.captureMessage(message, hint: Hint.withMap(extras ?? {}));
+    } else {
+      Sentry.addBreadcrumb(Breadcrumb(message: message));
+    }
+  },
+  verbose: true, // optional: dart:developer traces in debug mode
+);
 ```
 
-If `configure()` has not been called, failures fall back to `print()`. Use `JsonSentinel.logger` to check whether a logger is already configured before calling `configure()`.
+If `configure()` has not been called, failures fall back to `dart:developer` (visible in
+DevTools Logging; suppressed in release builds). Always call `configure()` or `silence()` in
+production code. Use `JsonSentinel.logger` to check whether a logger is already registered.
+
+#### No logging needed?
+
+Use `silence()` when you only want programmatic access to `result.errors`:
+
+```dart
+JsonSentinel.silence(); // installs a no-op logger — no output of any kind
+```
+
+`silence()` and `configure()` are mutually exclusive — call one or the other, never both.
 
 ### 2. Validate in `tryFromJson`
 
@@ -53,11 +69,12 @@ static OrderResponse? tryFromJson(Map<String, dynamic> json) {
     expectedTypes: {
       'orderId':   [int],
       'depotCode': [String],
-      'litres':    [int, double],
-      'notes':     [String, null], // nullable
+      'litres':    [int, double],   // union — API may return either
+      'notes':     [String, null],  // nullable
     },
-    optional: {'notes'},           // absent is fine; type-checked if present
+    optional: {'notes'},            // absent is fine; type-checked if present
     context: 'OrderResponse',
+    escalate: true,
   );
   if (!result.isValid) return null;
 
@@ -67,6 +84,55 @@ static OrderResponse? tryFromJson(Map<String, dynamic> json) {
     litres:    (json['litres'] as num).toDouble(),
     notes:     json['notes'] as String?,
   );
+}
+```
+
+### Nested JSON
+
+Validate the outer shape at each level; let child models validate their own fields.
+Failures carry the child's own `context` string, so log entries are always pinpointed.
+
+```dart
+// Parent: validates top-level keys as List/Map only.
+static PaginatedResponse? tryFromJson(Map<String, dynamic> json) {
+  final result = JsonSentinel.validate(
+    json: json,
+    expectedTypes: {
+      'data':  [List],
+      'links': [Map],
+      'meta':  [Map],
+    },
+    context: 'PaginatedResponse',
+    escalate: true,
+  );
+  if (!result.isValid) return null;
+
+  final meta = MetaModel.tryFromJson(
+    Map<String, dynamic>.from(json['meta'] as Map),
+  );
+  if (meta == null) return null;
+  // ...
+}
+
+// Child: validates its own schema, including nullable fields.
+static MetaModel? tryFromJson(Map<String, dynamic> json) {
+  final result = JsonSentinel.validate(
+    json: json,
+    expectedTypes: {
+      'current_page': [int],
+      'from':         [null, int],  // null when page is empty
+      'last_page':    [int],
+      'links':        [List],
+      'path':         [String],
+      'per_page':     [int],
+      'to':           [null, int],  // null when page is empty
+      'total':        [int],
+    },
+    context: 'MetaModel',
+    escalate: true,
+  );
+  if (!result.isValid) return null;
+  // ...
 }
 ```
 
@@ -90,7 +156,7 @@ Reject keys present in the JSON but not declared in your schema:
 JsonSentinel.validate(
   json: json,
   expectedTypes: {'id': [int]},
-  strict: true, // errors on any extra key
+  strict: true,
 );
 ```
 
@@ -115,7 +181,8 @@ if (!result.isValid) {
 
 ### Testing
 
-`configure()` asserts in debug mode if called twice — tests always run with asserts enabled. Call `JsonSentinel.resetLoggerForTesting()` in `tearDown` to allow re-configuration across test cases:
+`configure()` and `silence()` both assert in debug mode if called twice. Call
+`JsonSentinel.resetLoggerForTesting()` in `tearDown` to allow re-configuration across test cases:
 
 ```dart
 setUp(() {
@@ -139,6 +206,7 @@ tearDown(JsonSentinel.resetLoggerForTesting);
 | `[Map]` | Required, any `Map` |
 | `[List]` | Required, any `List` |
 | `[String, null]` | Required, `String` or `null` |
+| `[null, int]` | Required, `null` or `int` |
 | `null` or `[]` | Required key, type not checked |
 
 Add the key to `optional` to make presence itself optional.
