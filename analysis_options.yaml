@@ -1,0 +1,31 @@
+include: package:lints/recommended.yaml
+
+formatter:
+  page_width: 150
+
+linter:
+  rules:
+    # --- Correctness & Safety ---
+    avoid_annotating_with_dynamic: true
+    avoid_void_async: true
+    cancel_subscriptions: true
+    close_sinks: true
+    only_throw_errors: true
+    unawaited_futures: true
+
+    # --- Immutability ---
+    prefer_const_constructors: true
+    prefer_final_fields: true
+    prefer_final_locals: true
+
+    # --- Style & Clarity ---
+    always_put_required_named_parameters_first: true
+    always_use_package_imports: true
+    directives_ordering: true
+    prefer_is_empty: true
+    require_trailing_commas: true
+    unnecessary_await_in_return: true
+    unnecessary_constructor_name: true
+    unnecessary_late: true
+    unnecessary_parenthesis: true
+    use_enums: true

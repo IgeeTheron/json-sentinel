@@ -1,0 +1,1010 @@
+import 'package:json_sentinel/json_sentinel.dart';
+import 'package:test/test.dart';
+
+void main() {
+  // region Tests
+
+  // JsonSentinel._logger is global mutable state. Each test group installs a
+  // capturing logger in setUp and resets it in tearDown to prevent pollution.
+
+  group('JsonSentinel.validate —', () {
+    late List<String> logs;
+    late List<Object?> errors;
+    late List<StackTrace?> stackTraces;
+    late List<Map<String, Object?>?> capturedExtras;
+    late List<bool?> escalations;
+
+    setUp(() {
+      logs = [];
+      errors = [];
+      stackTraces = [];
+      capturedExtras = [];
+      escalations = [];
+      JsonSentinel.configure((message, {error, stackTrace, extras, escalate}) {
+        logs.add(message);
+        errors.add(error);
+        stackTraces.add(stackTrace);
+        capturedExtras.add(extras);
+        escalations.add(escalate);
+      });
+    });
+
+    tearDown(() {
+      JsonSentinel.resetLoggerForTesting();
+    });
+
+    // region Happy paths — isValid true, no log emitted.
+
+    test('should return isValid true when all keys are present with correct types', () {
+      // Arrange
+      final json = {'id': 1, 'name': 'Alice', 'active': true, 'score': 9.5};
+
+      // Act
+      final result = JsonSentinel.validate(
+        json: json,
+        expectedTypes: {
+          'id': [int],
+          'name': [String],
+          'active': [bool],
+          'score': [double],
+        },
+      );
+
+      // Assert
+      expect(result.isValid, isTrue);
+      expect(logs, isEmpty);
+    });
+
+    test('should return isValid true when expectedTypes is empty', () {
+      // Act
+      final result = JsonSentinel.validate(json: {'anything': 123}, expectedTypes: {});
+
+      // Assert
+      expect(result.isValid, isTrue);
+      expect(logs, isEmpty);
+    });
+
+    test('should return isValid true when type list is null (key-existence-only check)', () {
+      // Act
+      final result = JsonSentinel.validate(json: {'key': 42}, expectedTypes: {'key': null});
+
+      // Assert
+      expect(result.isValid, isTrue);
+      expect(logs, isEmpty);
+    });
+
+    test('should return isValid true when type list is empty (key-existence-only check)', () {
+      // Act
+      final result = JsonSentinel.validate(json: {'key': 'value'}, expectedTypes: {'key': []});
+
+      // Assert
+      expect(result.isValid, isTrue);
+      expect(logs, isEmpty);
+    });
+
+    test('should return isValid true for nullable field that is null', () {
+      // Act
+      final result = JsonSentinel.validate(
+        json: {'notes': null},
+        expectedTypes: {
+          'notes': [String, null],
+        },
+      );
+
+      // Assert
+      expect(result.isValid, isTrue);
+      expect(logs, isEmpty);
+    });
+
+    test('should return isValid true for nullable field that has a value', () {
+      // Act
+      final result = JsonSentinel.validate(
+        json: {'notes': 'some note'},
+        expectedTypes: {
+          'notes': [String, null],
+        },
+      );
+
+      // Assert
+      expect(result.isValid, isTrue);
+      expect(logs, isEmpty);
+    });
+
+    test('should return isValid true when value matches one of multiple allowed types', () {
+      // Act
+      final result = JsonSentinel.validate(
+        json: {'litres': 50},
+        expectedTypes: {
+          'litres': [int, double],
+        },
+      );
+
+      // Assert
+      expect(result.isValid, isTrue);
+      expect(logs, isEmpty);
+    });
+
+    test('should return isValid true for Map type', () {
+      // Act
+      final result = JsonSentinel.validate(
+        json: {
+          'meta': {'k': 'v'},
+        },
+        expectedTypes: {
+          'meta': [Map],
+        },
+      );
+
+      // Assert
+      expect(result.isValid, isTrue);
+      expect(logs, isEmpty);
+    });
+
+    test('should return isValid true for List type', () {
+      // Act
+      final result = JsonSentinel.validate(
+        json: {
+          'tags': ['a', 'b'],
+        },
+        expectedTypes: {
+          'tags': [List],
+        },
+      );
+
+      // Assert
+      expect(result.isValid, isTrue);
+      expect(logs, isEmpty);
+    });
+
+    test('should return isValid true for num type with int value', () {
+      // Act
+      final result = JsonSentinel.validate(
+        json: {'amount': 10},
+        expectedTypes: {
+          'amount': [num],
+        },
+      );
+
+      // Assert
+      expect(result.isValid, isTrue);
+      expect(logs, isEmpty);
+    });
+
+    test('should return isValid true for num type with double value', () {
+      // Act
+      final result = JsonSentinel.validate(
+        json: {'amount': 10.5},
+        expectedTypes: {
+          'amount': [num],
+        },
+      );
+
+      // Assert
+      expect(result.isValid, isTrue);
+      expect(logs, isEmpty);
+    });
+
+    // endregion
+
+    // region One log entry per validate call.
+
+    test('should emit exactly one log entry per failing call regardless of error count', () {
+      // Act
+      JsonSentinel.validate(
+        json: {},
+        expectedTypes: {
+          'a': [int],
+          'b': [String],
+          'c': [bool],
+        },
+        context: 'MultiMissing',
+      );
+
+      // Assert
+      expect(logs.length, 1);
+    });
+
+    test('should include context and error count in the log entry', () {
+      // Act
+      JsonSentinel.validate(
+        json: {},
+        expectedTypes: {
+          'a': [int],
+          'b': [String],
+          'c': [bool],
+        },
+        context: 'MultiMissing',
+      );
+
+      // Assert
+      expect(logs.first, contains('[MultiMissing]'));
+      expect(logs.first, contains('3 errors'));
+    });
+
+    test('should use "1 error" (singular) when exactly one validation fails', () {
+      // Act
+      JsonSentinel.validate(
+        json: {},
+        expectedTypes: {
+          'only': [int],
+        },
+        context: 'Singular',
+      );
+
+      // Assert
+      expect(logs.first, contains('1 error)'));
+      expect(logs.first, isNot(contains('1 errors')));
+    });
+
+    test('should use UnknownModel as default context when none is provided', () {
+      // Act
+      JsonSentinel.validate(
+        json: {},
+        expectedTypes: {
+          'missing': [int],
+        },
+      );
+
+      // Assert
+      expect(logs.first, contains('[UnknownModel]'));
+    });
+
+    // endregion
+
+    // region Error bullet list — all failures listed in the single log entry.
+
+    test('should list all missing keys as bullets in one log entry', () {
+      // Act
+      JsonSentinel.validate(
+        json: {},
+        expectedTypes: {
+          'a': [int],
+          'b': [String],
+          'c': [bool],
+        },
+        context: 'MultiMissing',
+      );
+
+      // Assert
+      final log = logs.first;
+      expect(log, contains("• Missing required key 'a'."));
+      expect(log, contains("• Missing required key 'b'."));
+      expect(log, contains("• Missing required key 'c'."));
+    });
+
+    test('should list all type mismatches as bullets in one log entry', () {
+      // Act
+      JsonSentinel.validate(
+        json: {'x': 'wrong', 'y': 'wrong'},
+        expectedTypes: {
+          'x': [int],
+          'y': [bool],
+        },
+        context: 'MultiType',
+      );
+
+      // Assert
+      final log = logs.first;
+      expect(log, contains("• Key 'x' has invalid type."));
+      expect(log, contains("• Key 'y' has invalid type."));
+    });
+
+    test('should list mixed errors (missing key + type mismatch) together', () {
+      // Act
+      JsonSentinel.validate(
+        json: {'id': 'oops'},
+        expectedTypes: {
+          'id': [int],
+          'name': [String],
+        },
+        context: 'Mixed',
+      );
+
+      // Assert
+      final log = logs.first;
+      expect(log, contains('invalid type'));
+      expect(log, contains("Missing required key 'name'."));
+      expect(log, contains('2 errors'));
+    });
+
+    // endregion
+
+    // region Message format — JSON preview lives in extras, not the message string.
+
+    test('should not contain JSON preview inline in the message', () {
+      // Act
+      JsonSentinel.validate(
+        json: {'id': 'bad'},
+        expectedTypes: {
+          'id': [int],
+        },
+      );
+
+      // Assert
+      expect(logs.first, isNot(contains('JSON preview:')));
+    });
+
+    // endregion
+
+    // region Missing key.
+
+    test('should return isValid false when a required key is missing', () {
+      // Act
+      final result = JsonSentinel.validate(
+        json: {'id': 1},
+        expectedTypes: {
+          'id': [int],
+          'name': [String],
+        },
+        context: 'UserResponse',
+      );
+
+      // Assert
+      expect(result.isValid, isFalse);
+    });
+
+    test('should include the missing key name in the log entry', () {
+      // Act
+      JsonSentinel.validate(
+        json: {'id': 1},
+        expectedTypes: {
+          'id': [int],
+          'name': [String],
+        },
+        context: 'UserResponse',
+      );
+
+      // Assert
+      expect(logs.first, contains("Missing required key 'name'."));
+    });
+
+    // endregion
+
+    // region Null violations.
+
+    test('should return isValid false when non-nullable field is null', () {
+      // Act
+      final result = JsonSentinel.validate(
+        json: {'name': null},
+        expectedTypes: {
+          'name': [String],
+        },
+        context: 'NullCheck',
+      );
+
+      // Assert
+      expect(result.isValid, isFalse);
+    });
+
+    test('should include the null violation key name in the log entry', () {
+      // Act
+      JsonSentinel.validate(
+        json: {'name': null},
+        expectedTypes: {
+          'name': [String],
+        },
+        context: 'NullCheck',
+      );
+
+      // Assert
+      expect(logs.first, contains("Key 'name' cannot be null."));
+    });
+
+    // endregion
+
+    // region Type mismatches.
+
+    test('should return isValid false when value has wrong type', () {
+      // Act
+      final result = JsonSentinel.validate(
+        json: {'id': 'not-an-int'},
+        expectedTypes: {
+          'id': [int],
+        },
+        context: 'TypeMismatch',
+      );
+
+      // Assert
+      expect(result.isValid, isFalse);
+    });
+
+    test('should include expected and actual type in the log entry when type mismatches', () {
+      // Act
+      JsonSentinel.validate(
+        json: {'id': 'not-an-int'},
+        expectedTypes: {
+          'id': [int],
+        },
+        context: 'TypeMismatch',
+      );
+
+      // Assert
+      final log = logs.first;
+      expect(log, contains('[TypeMismatch]'));
+      expect(log, contains("'id'"));
+      expect(log, contains('Expected:'));
+      expect(log, contains('Actual:'));
+    });
+
+    test('should return isValid false when value does not match any type in a union', () {
+      // Act
+      final result = JsonSentinel.validate(
+        json: {'count': 'many'},
+        expectedTypes: {
+          'count': [int, double],
+        },
+      );
+
+      // Assert
+      expect(result.isValid, isFalse);
+    });
+
+    // endregion
+
+    // region Stack trace.
+
+    test('should pass a non-null stack trace to the logger on failure', () {
+      // Act
+      JsonSentinel.validate(
+        json: {},
+        expectedTypes: {
+          'key': [int],
+        },
+        context: 'StackCheck',
+      );
+
+      // Assert
+      expect(stackTraces.first, isNotNull);
+    });
+
+    test('should not invoke the logger on success', () {
+      // Act
+      JsonSentinel.validate(
+        json: {'key': 1},
+        expectedTypes: {
+          'key': [int],
+        },
+      );
+
+      // Assert
+      expect(stackTraces, isEmpty);
+    });
+
+    // endregion
+
+    // region Logger parameters — all five captured correctly.
+
+    test('should pass null for the error parameter on validation failure', () {
+      // The error param is reserved for exception-based callers;
+      // validate() never populates it. Document this behaviour explicitly.
+
+      // Act
+      JsonSentinel.validate(
+        json: {},
+        expectedTypes: {
+          'key': [int],
+        },
+      );
+
+      // Assert
+      expect(errors.first, isNull);
+    });
+
+    test('should capture all five JsonLogFn parameters on a single failure', () {
+      // Act
+      JsonSentinel.validate(
+        json: {},
+        expectedTypes: {
+          'key': [int],
+        },
+        context: 'FullCapture',
+        escalate: false,
+      );
+
+      // Assert
+      expect(logs, hasLength(1));
+      expect(logs.first, contains('[FullCapture]'));
+      expect(errors.first, isNull);
+      expect(stackTraces.first, isNotNull);
+      expect(capturedExtras.first, isNotNull);
+      expect(capturedExtras.first!['context'], 'FullCapture');
+      expect(escalations.first, isFalse);
+    });
+
+    // endregion
+
+    // region Escalation — configurable per call.
+
+    test('should pass escalate: true to the logger on failure by default', () {
+      // Act
+      JsonSentinel.validate(
+        json: {},
+        expectedTypes: {
+          'key': [int],
+        },
+      );
+
+      // Assert
+      expect(escalations.first, isTrue);
+    });
+
+    test('should pass escalate: false to the logger when explicitly set', () {
+      // Act
+      JsonSentinel.validate(
+        json: {},
+        expectedTypes: {
+          'key': [int],
+        },
+        escalate: false,
+      );
+
+      // Assert
+      expect(escalations.first, isFalse);
+    });
+
+    test('should not invoke the logger on success', () {
+      // Act
+      JsonSentinel.validate(
+        json: {'key': 1},
+        expectedTypes: {
+          'key': [int],
+        },
+      );
+
+      // Assert
+      expect(escalations, isEmpty);
+    });
+
+    // endregion
+
+    // region Extras — JSON and context passed as structured data, not inline text.
+
+    test('should include a context key in extras on failure', () {
+      // Act
+      JsonSentinel.validate(
+        json: {'id': 'bad'},
+        expectedTypes: {
+          'id': [int],
+        },
+        context: 'OrderResponse',
+      );
+
+      // Assert
+      expect(capturedExtras.first, isNotNull);
+      expect(capturedExtras.first!['context'], 'OrderResponse');
+    });
+
+    test('should include a json_preview key in extras on failure', () {
+      // Act
+      JsonSentinel.validate(
+        json: {'name': 'Alice'},
+        expectedTypes: {
+          'missing': [int],
+        },
+      );
+
+      // Assert
+      expect(capturedExtras.first, isNotNull);
+      expect(capturedExtras.first!.containsKey('json_preview'), isTrue);
+    });
+
+    test('should encode json_preview with quoted keys (valid JSON format)', () {
+      // Act
+      JsonSentinel.validate(
+        json: {'name': 'Alice'},
+        expectedTypes: {
+          'missing': [int],
+        },
+      );
+
+      // Assert — jsonEncode produces {"name":"Alice"}, not {name: Alice}
+      final preview = capturedExtras.first!['json_preview'] as String;
+      expect(preview, contains('"name"'));
+    });
+
+    test('should truncate json_preview to at most 601 characters when JSON exceeds 600 characters', () {
+      // Arrange
+      final bigJson = {for (var i = 0; i < 50; i++) 'key_$i': 'a' * 20};
+
+      // Act
+      JsonSentinel.validate(
+        json: bigJson,
+        expectedTypes: {
+          'missing_key': [int],
+        },
+      );
+
+      // Assert
+      final preview = capturedExtras.first!['json_preview'] as String;
+      expect(preview, endsWith('…'));
+      expect(preview.length, lessThanOrEqualTo(601));
+    });
+
+    test('should not truncate json_preview when JSON is under 600 characters', () {
+      // Act
+      JsonSentinel.validate(
+        json: {'x': 1},
+        expectedTypes: {
+          'missing': [int],
+        },
+      );
+
+      // Assert
+      final preview = capturedExtras.first!['json_preview'] as String;
+      expect(preview, isNot(contains('…')));
+    });
+
+    test('should not truncate json_preview when JSON is exactly 600 characters', () {
+      // {"a":"<592 x's>"} encodes to exactly 600 characters.
+      final exactJson = {'a': 'x' * 592};
+
+      // Act
+      JsonSentinel.validate(
+        json: exactJson,
+        expectedTypes: {
+          'missing': [int],
+        },
+      );
+
+      // Assert — exactly 600 chars must not be truncated.
+      final preview = capturedExtras.first!['json_preview'] as String;
+      expect(preview.length, 600);
+      expect(preview, isNot(endsWith('…')));
+    });
+
+    test('should not invoke the logger on success', () {
+      // Act
+      JsonSentinel.validate(
+        json: {'key': 1},
+        expectedTypes: {
+          'key': [int],
+        },
+      );
+
+      // Assert
+      expect(capturedExtras, isEmpty);
+    });
+
+    // endregion
+
+    // region Logger fallback — when logger is null, print is used (no crash).
+
+    test('should not throw when logger is null and validation fails', () {
+      // Arrange
+      JsonSentinel.resetLoggerForTesting();
+
+      // Act & Assert
+      expect(
+        () => JsonSentinel.validate(
+          json: {},
+          expectedTypes: {
+            'key': [int],
+          },
+        ),
+        returnsNormally,
+      );
+    });
+
+    test('should not throw when logger is null and failure extras are printed', () {
+      // validate() always passes a non-null extras map on failure,
+      // exercising the extras iteration loop in the print fallback.
+      JsonSentinel.resetLoggerForTesting();
+
+      // Act & Assert
+      expect(
+        () => JsonSentinel.validate(
+          json: {'name': 'Alice'},
+          expectedTypes: {
+            'missing': [int],
+          },
+          context: 'FallbackExtras',
+        ),
+        returnsNormally,
+      );
+    });
+
+    test('should not throw when logger is null and stack trace is printed', () {
+      // validate() always captures StackTrace.current and passes it to _log,
+      // exercising the stackTrace print branch in the fallback path.
+      JsonSentinel.resetLoggerForTesting();
+
+      // Act & Assert
+      expect(
+        () => JsonSentinel.validate(
+          json: {},
+          expectedTypes: {
+            'key': [int],
+          },
+        ),
+        returnsNormally,
+      );
+    });
+
+    // endregion
+
+    // region configure() / resetLoggerForTesting() / logger getter.
+
+    test('should return null from logger getter before configure() is called', () {
+      // Arrange
+      JsonSentinel.resetLoggerForTesting();
+
+      // Act & Assert
+      expect(JsonSentinel.logger, isNull);
+    });
+
+    test('should return non-null from logger getter after configure() is called', () {
+      // Act & Assert — configure() was called in setUp
+      expect(JsonSentinel.logger, isNotNull);
+    });
+
+    test('should throw AssertionError when configure() is called twice in debug mode', () {
+      // Tests always run with asserts enabled, so a second configure() after
+      // the one in setUp must throw AssertionError.
+
+      // Act & Assert
+      expect(() => JsonSentinel.configure((msg, {error, stackTrace, extras, escalate}) {}), throwsA(isA<AssertionError>()));
+    });
+
+    test('should allow configure() to be called again after resetLoggerForTesting()', () {
+      // Arrange
+      JsonSentinel.resetLoggerForTesting();
+
+      // Act & Assert
+      expect(() => JsonSentinel.configure((msg, {error, stackTrace, extras, escalate}) {}), returnsNormally);
+    });
+
+    // endregion
+
+    // region json_preview fallback — non-JSON-encodable values fall back to toString().
+
+    test('should fall back to Map.toString() for json_preview when jsonEncode throws', () {
+      // Arrange — DateTime is not JSON-encodable; triggers the catch(_) fallback.
+      final nonEncodable = <String, dynamic>{'timestamp': DateTime(2024)};
+
+      // Act
+      JsonSentinel.validate(
+        json: nonEncodable,
+        expectedTypes: {
+          'missing': [int],
+        },
+      );
+
+      // Assert — Map.toString() preserves the key name
+      final preview = capturedExtras.first!['json_preview'] as String;
+      expect(preview, contains('timestamp'));
+    });
+
+    // endregion
+
+    // region Edge cases in type matching.
+
+    test('should return isValid false when type list is [null] only and value is non-null', () {
+      // Act
+      final result = JsonSentinel.validate(
+        json: {'field': 'not-null'},
+        expectedTypes: {
+          'field': [null],
+        },
+      );
+
+      // Assert
+      expect(result.isValid, isFalse);
+    });
+
+    test('should return isValid true when type list is [null] only and value is null', () {
+      // Act
+      final result = JsonSentinel.validate(
+        json: {'field': null},
+        expectedTypes: {
+          'field': [null],
+        },
+      );
+
+      // Assert
+      expect(result.isValid, isTrue);
+    });
+
+    test('should allow null value when null token is at start of type list', () {
+      // Act
+      final result = JsonSentinel.validate(
+        json: {'notes': null},
+        expectedTypes: {
+          'notes': [null, String],
+        },
+      );
+
+      // Assert
+      expect(result.isValid, isTrue);
+    });
+
+    test('should validate non-null value against remaining types when null token is at start of type list', () {
+      // Act
+      final result = JsonSentinel.validate(
+        json: {'notes': 'hello'},
+        expectedTypes: {
+          'notes': [null, String],
+        },
+      );
+
+      // Assert
+      expect(result.isValid, isTrue);
+    });
+
+    // endregion
+
+    // region Optional fields.
+
+    test('should return isValid true when an optional key is absent', () {
+      // Act
+      final result = JsonSentinel.validate(
+        json: {'id': 1},
+        expectedTypes: {
+          'id': [int],
+          'nickname': [String],
+        },
+        optional: {'nickname'},
+      );
+
+      // Assert
+      expect(result.isValid, isTrue);
+      expect(logs, isEmpty);
+    });
+
+    test('should return isValid false when an optional key is present with the wrong type', () {
+      // Act
+      final result = JsonSentinel.validate(
+        json: {'id': 1, 'nickname': 42},
+        expectedTypes: {
+          'id': [int],
+          'nickname': [String],
+        },
+        optional: {'nickname'},
+      );
+
+      // Assert
+      expect(result.isValid, isFalse);
+      expect(logs.first, contains("Key 'nickname' has invalid type."));
+    });
+
+    test('should return isValid true when an optional key is present with the correct type', () {
+      // Act
+      final result = JsonSentinel.validate(
+        json: {'id': 1, 'nickname': 'Igee'},
+        expectedTypes: {
+          'id': [int],
+          'nickname': [String],
+        },
+        optional: {'nickname'},
+      );
+
+      // Assert
+      expect(result.isValid, isTrue);
+      expect(logs, isEmpty);
+    });
+
+    test('should still require non-optional keys when an optional set is provided', () {
+      // Act
+      final result = JsonSentinel.validate(
+        json: {},
+        expectedTypes: {
+          'id': [int],
+          'nickname': [String],
+        },
+        optional: {'nickname'},
+      );
+
+      // Assert
+      expect(result.isValid, isFalse);
+      expect(logs.first, contains("Missing required key 'id'."));
+      expect(logs.first, isNot(contains("'nickname'")));
+    });
+
+    // endregion
+
+    // region Strict mode.
+
+    test('should return isValid true for unexpected keys when strict is false (default)', () {
+      // Act
+      final result = JsonSentinel.validate(
+        json: {'id': 1, 'extra': 'surprise'},
+        expectedTypes: {
+          'id': [int],
+        },
+      );
+
+      // Assert
+      expect(result.isValid, isTrue);
+      expect(logs, isEmpty);
+    });
+
+    test('should return isValid false when an unexpected key is present and strict is true', () {
+      // Act
+      final result = JsonSentinel.validate(
+        json: {'id': 1, 'extra': 'surprise'},
+        expectedTypes: {
+          'id': [int],
+        },
+        strict: true,
+      );
+
+      // Assert
+      expect(result.isValid, isFalse);
+    });
+
+    test('should name the unexpected key in the log entry when strict is true', () {
+      // Act
+      JsonSentinel.validate(
+        json: {'id': 1, 'extra': 'surprise'},
+        expectedTypes: {
+          'id': [int],
+        },
+        strict: true,
+      );
+
+      // Assert
+      expect(logs.first, contains("Unexpected key 'extra'."));
+    });
+
+    test('should return isValid true when json exactly matches expectedTypes in strict mode', () {
+      // Act
+      final result = JsonSentinel.validate(
+        json: {'id': 1, 'name': 'Alice'},
+        expectedTypes: {
+          'id': [int],
+          'name': [String],
+        },
+        strict: true,
+      );
+
+      // Assert
+      expect(result.isValid, isTrue);
+      expect(logs, isEmpty);
+    });
+
+    // endregion
+
+    // region Optional + strict combined.
+
+    test('should not flag an absent optional key as unexpected when strict is true', () {
+      // An optional key declared in expectedTypes is not "unexpected" even when
+      // absent — strict only flags keys in json that are NOT in expectedTypes.
+
+      // Act
+      final result = JsonSentinel.validate(
+        json: {'id': 1, 'surprise': 'x'},
+        expectedTypes: {
+          'id': [int],
+          'nickname': [String],
+        },
+        optional: {'nickname'},
+        strict: true,
+      );
+
+      // Assert — 'surprise' triggers strict; absent 'nickname' does not.
+      expect(result.isValid, isFalse);
+      expect(logs.first, contains("Unexpected key 'surprise'."));
+      expect(logs.first, isNot(contains("'nickname'")));
+    });
+
+    test('should return isValid true when an optional key is present with correct type in strict mode', () {
+      // Act
+      final result = JsonSentinel.validate(
+        json: {'id': 1, 'nickname': 'Igee'},
+        expectedTypes: {
+          'id': [int],
+          'nickname': [String],
+        },
+        optional: {'nickname'},
+        strict: true,
+      );
+
+      // Assert
+      expect(result.isValid, isTrue);
+      expect(logs, isEmpty);
+    });
+
+    // endregion
+  });
+
+  // endregion
+}

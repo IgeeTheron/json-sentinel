@@ -1,0 +1,14 @@
+name: json_sentinel
+description: Lightweight runtime JSON key and type validation for Dart. No code generation required.
+version: 0.1.0
+repository: https://github.com/My-Fuel-Orders/json_sentinel
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+# Add regular dependencies here.
+dependencies:
+
+dev_dependencies:
+  lints: ^6.0.0
+  test: ^1.25.6

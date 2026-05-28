@@ -1,0 +1,42 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cmd=$(jq -r '.tool_input.command // empty' 2>/dev/null); is_destructive=0; case \"$cmd\" in *'git reset --hard'*|*'git clean -f'*|*'git stash drop'*|*'git stash clear'*|*'git branch -D'*|*'rm -rf'*) is_destructive=1;; esac; printf '%s\\n' \"$cmd\" | grep -qE 'git push.+(-f\\b|--force)' && is_destructive=1 || true; if [ \"$is_destructive\" -eq 1 ]; then BLOCKED_CMD=\"$cmd\" python3 -c \"import json,os; print(json.dumps({'permissionDecision':'deny','additionalContext':'Destructive command blocked — confirm with user before running: '+os.environ.get('BLOCKED_CMD','')}))\"; fi",
+            "timeout": 5,
+            "statusMessage": "Safety check..."
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path // empty' | { read -r f; case \"$f\" in *.dart) ;; *) exit 0;; esac; dart format \"$f\" 2>/dev/null || true; }",
+            "timeout": 30,
+            "statusMessage": "Formatting Dart file..."
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "git status --porcelain 2>/dev/null | grep -q '\\.dart' || exit 0; dart format . > /dev/null 2>&1; ana_out=$(dart analyze 2>&1); ana_rc=$?; if [ \"$ana_rc\" -ne 0 ]; then dart fix --apply . > /dev/null 2>&1; dart format . > /dev/null 2>&1; FIX_APPLIED=1; ana_out=$(dart analyze 2>&1); ana_rc=$?; else FIX_APPLIED=0; fi; if [ \"$ana_rc\" -ne 0 ]; then ana_filtered=$(printf '%s' \"$ana_out\" | grep -Ev '^Resolving dependencies|^Downloading packages|^Got dependencies|packages have newer versions|dart pub outdated' | head -60); printf '%s' \"$ana_filtered\" | FIX_APPLIED=$FIX_APPLIED python3 -c \"import sys,json,os; issues=sys.stdin.read(); applied=os.environ.get('FIX_APPLIED','0')=='1'; ctx='dart format + dart fix --apply auto-applied. Remaining issues:\\n' if applied else 'Remaining issues (dart fix found no auto-fixes):\\n'; print(json.dumps({'decision':'block','reason':'dart analyze failed. Fix every issue below, then stop.\\nIf you cannot resolve an issue after 2 attempts, explain the blocker and stop — do not loop.\\nUse /flutter-analyze-fix skill for complex issues.\\n\\n'+ctx+issues}))\"; exit 0; fi; test_files=\"\"; for f in $(git status --porcelain 2>/dev/null | awk '{print substr($0,4)}'); do if [ \"${f#lib/}\" != \"$f\" ] && [ \"${f%.dart}\" != \"$f\" ]; then tf=\"test/${f#lib/}\"; tf=\"${tf%.dart}_test.dart\"; elif [ \"${f#test/}\" != \"$f\" ] && [ \"${f%_test.dart}\" != \"$f\" ]; then tf=\"$f\"; else tf=\"\"; fi; [ -n \"$tf\" ] && [ -f \"$tf\" ] && { echo \" $test_files \" | grep -qF \" $tf \" || test_files=\"$test_files $tf\"; }; done; if [ -n \"$test_files\" ]; then test_out=$(dart test $test_files 2>&1); test_rc=$?; if [ \"$test_rc\" -ne 0 ]; then test_filtered=$(printf '%s' \"$test_out\" | tail -80); printf '%s' \"$test_filtered\" | python3 -c \"import sys,json; output=sys.stdin.read(); print(json.dumps({'decision':'block','reason':'Tests failed for files changed in this turn. Fix the failures below, then stop.\\nIf you cannot resolve after 2 attempts, explain the blocker and stop — do not loop.\\n\\n'+output}))\"; exit 0; fi; fi",
+            "timeout": 300,
+            "statusMessage": "Running quality checks..."
+          }
+        ]
+      }
+    ]
+  }
+}
