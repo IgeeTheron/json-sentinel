@@ -145,5 +145,7 @@ Add the key to `optional` to make presence itself optional.
 
 ## Additional information
 
-- File issues at the [GitHub repository](https://github.com/My-Fuel-Orders/json_sentinel)
-- Contributions welcome
+- [pub.dev package page](https://pub.dev/packages/json_sentinel)
+- [File issues](https://github.com/My-Fuel-Orders/json_sentinel/issues)
+- [Changelog](https://github.com/My-Fuel-Orders/json_sentinel/blob/main/CHANGELOG.md)
+- Contributions welcome — open an issue before starting significant work
