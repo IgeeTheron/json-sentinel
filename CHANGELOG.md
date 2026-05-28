@@ -24,4 +24,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fallback logging via `dart:developer` when no logger is configured; suppressed in release builds — always call `configure()` or `silence()` in production code.
 - Zero runtime dependencies — pure Dart, works in Flutter, server, and CLI projects.
 
-[0.1.0]: https://github.com/My-Fuel-Orders/json_sentinel/releases/tag/v0.1.0
+[0.1.0]: https://github.com/IgeeTheron/json-sentinel/releases/tag/v0.1.0

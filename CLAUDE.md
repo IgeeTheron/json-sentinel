@@ -49,7 +49,7 @@ Pure Dart package, zero runtime dependencies. Three source files under `lib/src/
 Two GitHub Actions workflows in `.github/workflows/`:
 
 - **`ci.yml`** — runs on every PR and push to `main`: format check, analyze, script tests, dart tests. Failing tests appear as inline annotations in the PR diff (`--reporter=github`).
-- **`publish.yml`** — triggered by a `v[0-9]+.[0-9]+.[0-9]+` tag: runs the full check suite in a `ci` job, then publishes via the official `dart-lang/setup-dart/.github/workflows/publish.yml@v1` reusable workflow using OIDC (no long-lived secret). Requires one-time setup on `pub.dev/packages/json_sentinel/admin` — enable automated publishing, set repo to `My-Fuel-Orders/json_sentinel`, tag pattern `v{{version}}`.
+- **`publish.yml`** — triggered by a `v[0-9]+.[0-9]+.[0-9]+` tag: runs the full check suite in a `ci` job, then publishes via the official `dart-lang/setup-dart/.github/workflows/publish.yml@v1` reusable workflow using OIDC (no long-lived secret). Requires one-time setup on `pub.dev/packages/json_sentinel/admin` — enable automated publishing, set repo to `IgeeTheron/json-sentinel`, tag pattern `v{{version}}`.
 
 ## Changelog
 
