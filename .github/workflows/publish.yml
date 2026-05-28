@@ -3,14 +3,13 @@ name: Publish
 on:
   push:
     tags:
-      - 'v[0-9]*.[0-9]*.[0-9]*'
-
-permissions:
-  contents: read
+      - 'v[0-9]+.[0-9]+.[0-9]+'
 
 jobs:
-  publish:
+  ci:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - uses: actions/checkout@v4
@@ -23,10 +22,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.pub-cache
-          key: ${{ runner.os }}-pub-${{ hashFiles('pubspec.lock') }}
+          key: ${{ runner.os }}-pub-${{ hashFiles('pubspec.yaml') }}
           restore-keys: ${{ runner.os }}-pub-
-
-      - run: dart --version
 
       - run: dart pub get
 
@@ -39,12 +36,8 @@ jobs:
       - name: Test
         run: dart test
 
-      - name: Set up pub.dev credentials
-        env:
-          PUB_DEV_CREDENTIALS: ${{ secrets.PUB_DEV_CREDENTIALS }}
-        run: |
-          mkdir -p ~/.pub-cache
-          printf '%s' "$PUB_DEV_CREDENTIALS" > ~/.pub-cache/credentials.json
-
-      - name: Publish to pub.dev
-        run: bash scripts/publish.sh --force
+  publish:
+    needs: ci
+    permissions:
+      id-token: write
+    uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1
