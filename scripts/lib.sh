@@ -81,7 +81,7 @@ run_pretty() {
   "$@" \
     2> >(sed 's/^/  ❌ /' >&2) \
     | sed 's/^/  │ /'
-  local status=$?
+  local status=${PIPESTATUS[0]}
   set -e
 
   if [[ $status -ne 0 ]]; then

@@ -93,6 +93,33 @@ run_test "run_pretty DRY_RUN=true formats flags on continuation lines" \
     echo \"\$output\" | grep -q '\-\-flag-b'
   "
 
+run_test "run_pretty DRY_RUN=true with no flags prints command on one line" \
+  bash -c "
+    die() { exit 1; }
+    DRY_RUN=true
+    source '$ROOT/scripts/lib.sh'
+    output=\$(run_pretty 'test' some_cmd)
+    echo \"\$output\" | grep -q 'some_cmd'
+    ! echo \"\$output\" | grep -q '\\\\'
+  "
+
+run_test "run_pretty DRY_RUN=false executes command and prefixes output" \
+  bash -c "
+    die() { exit 1; }
+    DRY_RUN=false
+    source '$ROOT/scripts/lib.sh'
+    output=\$(run_pretty 'test' echo hello 2>&1)
+    echo \"\$output\" | grep -q '│ hello'
+  "
+
+run_test_fails "run_pretty DRY_RUN=false calls die() when command fails" \
+  bash -c "
+    die() { exit 1; }
+    DRY_RUN=false
+    source '$ROOT/scripts/lib.sh'
+    run_pretty 'test' bash -c 'exit 1'
+  "
+
 ########################################
 # publish.sh — help
 ########################################
@@ -109,6 +136,9 @@ run_test "--help output contains 'Usage'" \
 run_test "--help output contains '--dry-run'" \
   bash -c "bash '$ROOT/scripts/publish.sh' --help | grep -q '\-\-dry-run'"
 
+run_test "--help output contains '--force'" \
+  bash -c "bash '$ROOT/scripts/publish.sh' --help | grep -q '\-\-force'"
+
 ########################################
 # publish.sh — argument validation
 ########################################
@@ -121,16 +151,17 @@ run_test_fails "unknown argument exits non-zero" \
 
 run_test "recognises --dry-run without error" \
   bash -c "
-    cd '$ROOT'
-    # --dry-run will proceed past arg parsing but may fail at dart pub publish --dry-run
-    # We only test that the flag is accepted (no 'Unknown argument' error)
-    output=\$(bash scripts/publish.sh --dry-run 2>&1 || true)
+    tmp=\$(mktemp -d)
+    output=\$(cd \"\$tmp\" && bash '$ROOT/scripts/publish.sh' --dry-run 2>&1 || true)
+    rm -rf \"\$tmp\"
     ! echo \"\$output\" | grep -q 'Unknown argument'
   "
 
 run_test "recognises --force without error" \
   bash -c "
-    output=\$(bash '$ROOT/scripts/publish.sh' --force 2>&1 || true)
+    tmp=\$(mktemp -d)
+    output=\$(cd \"\$tmp\" && bash '$ROOT/scripts/publish.sh' --force 2>&1 || true)
+    rm -rf \"\$tmp\"
     ! echo \"\$output\" | grep -q 'Unknown argument'
   "
 
@@ -140,17 +171,6 @@ run_test "recognises --force without error" \
 
 echo ""
 echo "▶ publish.sh — version validation"
-
-_run_publish_in_tmpdir() {
-  local version="$1"; shift
-  local tmp
-  tmp=$(mktemp -d)
-  printf 'name: json_sentinel\nversion: %s\n' "$version" > "$tmp/pubspec.yaml"
-  (cd "$tmp" && bash "$ROOT/scripts/publish.sh" "$@" 2>&1)
-  local status=$?
-  rm -rf "$tmp"
-  return $status
-}
 
 run_test "accepts MAJOR.MINOR.PATCH version" \
   bash -c "
@@ -207,6 +227,15 @@ run_test_fails "fails when version line is missing from pubspec.yaml" \
     (cd \"\$tmp\" && bash '$ROOT/scripts/publish.sh' --dry-run 2>&1) || result=\$?
     rm -rf \"\$tmp\"
     exit \$result
+  "
+
+run_test "prints package version from pubspec.yaml" \
+  bash -c "
+    tmp=\$(mktemp -d)
+    printf 'name: json_sentinel\nversion: 2.3.4\n' > \"\$tmp/pubspec.yaml\"
+    output=\$(cd \"\$tmp\" && bash '$ROOT/scripts/publish.sh' --dry-run 2>&1 || true)
+    rm -rf \"\$tmp\"
+    echo \"\$output\" | grep -q '2.3.4'
   "
 
 ########################################
