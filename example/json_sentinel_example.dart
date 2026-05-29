@@ -1,12 +1,7 @@
 // ignore_for_file: avoid_print
 import 'package:json_sentinel/json_sentinel.dart';
 
-// ---------------------------------------------------------------------------
-// Setup — call once at app startup.
-// ---------------------------------------------------------------------------
-//
-// Configure a real logger before your first validate() call.
-// In a Flutter app this would forward to Sentry, Crashlytics, etc.
+// Configure once at app startup. In production forward to your error reporter:
 //
 //   JsonSentinel.configure(
 //     (message, {error, stackTrace, extras, escalate}) {
@@ -16,22 +11,23 @@ import 'package:json_sentinel/json_sentinel.dart';
 //         Sentry.addBreadcrumb(Breadcrumb(message: message));
 //       }
 //     },
-//     verbose: true, // emits dart:developer traces in debug mode
 //   );
 //
-// If you only want programmatic access to result.errors and no log output:
+// To suppress all log output and read errors from result.errors instead:
 //
-//   JsonSentinel.silence();   // or silence(verbose: true) for dev traces
+//   JsonSentinel.silence();
 
 void main() {
   JsonSentinel.configure(
     (message, {error, stackTrace, extras, escalate}) {
       print('[${escalate == true ? 'ERROR' : 'WARN'}] $message');
     },
-    verbose: true,
   );
 
-  // --- 1. Basic flat response -----------------------------------------------
+  // --- 1. validate() in a tryFromJson factory --------------------------------
+  //
+  // The typical pattern: validate once, return null on failure.
+  // Each failing key is reported in a single log entry.
 
   final orderJson = <String, dynamic>{
     'orderId': 42,
@@ -42,10 +38,14 @@ void main() {
 
   final order = OrderResponse.tryFromJson(orderJson);
   if (order != null) {
-    print('Order ${order.orderId} — ${order.litres} L from ${order.depotCode}');
+    print('Order ${order.orderId} — ${order.litres}L from ${order.depotCode}');
+    // → Order 42 — 500.0L from CPT01
   }
 
-  // --- 2. Nested / paginated response ---------------------------------------
+  // --- 2. Nested response — each level validates its own fields --------------
+  //
+  // PaginatedResponse checks the top-level shape, then delegates to MetaModel
+  // for the meta sub-object. Failures are logged under separate context labels.
 
   final pageJson = <String, dynamic>{
     'data': <dynamic>[],
@@ -65,12 +65,46 @@ void main() {
   final page = PaginatedResponse.tryFromJson(pageJson);
   if (page != null) {
     print('Page ${page.meta.currentPage} of ${page.meta.lastPage} — ${page.meta.total} total');
+    // → Page 1 of 1 — 0 total
   }
 
-  // --- 3. Strict mode -------------------------------------------------------
+  // --- 3. validateBatch() — one log entry for all failures combined ----------
+  //
+  // When iterating over a list of API payloads, validateBatch() fires a single
+  // consolidated log entry instead of one per failing record. This prevents
+  // duplicate Sentry/Crashlytics events when 20 payloads share the same fault.
 
-  // Rejects keys present in the JSON but not declared in the schema.
-  JsonSentinel.validate(
+  final records = <Map<String, dynamic>>[
+    {'id': 1, 'name': 'Alice', 'role': 'admin'},
+    {'id': 2, 'name': 'Bob'}, // missing 'role'
+    {'id': 'three', 'name': 'Carol', 'role': 'viewer'}, // wrong type for 'id'
+    {'id': 4, 'name': 'Dave', 'role': 'editor'},
+  ];
+
+  final batch = JsonSentinel.validateBatch(
+    jsons: records,
+    expectedTypes: {
+      'id': [int],
+      'name': [String],
+      'role': [String],
+    },
+    context: 'UserRecord',
+  );
+
+  // One consolidated log entry fires above (not one per failing record).
+  print('${batch.failureCount} of ${records.length} records invalid (indices: ${batch.failureIndices})');
+  // → 2 of 4 records invalid (indices: [1, 2])
+
+  // Per-item results are still accessible for programmatic handling:
+  for (final i in batch.failureIndices) {
+    print('  Record $i: ${batch.results[i].errors.join('; ')}');
+  }
+  // → Record 1: Missing required key 'role'.
+  // → Record 2: Key 'id' has invalid type. Expected: int; Actual: String.
+
+  // --- 4. Strict mode — reject unexpected keys ------------------------------
+
+  final strictResult = JsonSentinel.validate(
     json: <String, dynamic>{'id': 1, 'unexpected': 'surprise'},
     expectedTypes: {
       'id': [int],
@@ -78,6 +112,10 @@ void main() {
     strict: true,
     context: 'StrictExample',
   );
+  print('Strict check valid: ${strictResult.isValid}');
+  // → [WARN] [StrictExample] JSON validation failed (1 error):
+  // →   • Unexpected key 'unexpected'.
+  // → Strict check valid: false
 }
 
 // ---------------------------------------------------------------------------
@@ -121,8 +159,8 @@ class OrderResponse {
   }
 }
 
-// Validate the top-level paginated shape (data/links/meta as List/Map) here.
-// Each nested model validates its own fields — failures carry their own context.
+// Validates the top-level paginated shape; delegates to MetaModel for the
+// meta sub-object so each level logs failures under its own context label.
 class PaginatedResponse {
   final List<dynamic> data;
   final Map<String, dynamic> links;

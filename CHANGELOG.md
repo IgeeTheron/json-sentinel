@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `JsonSentinel.validateBatch()` — validates a list of `Map<String, dynamic>` payloads against a shared schema and emits a single consolidated log entry covering all failures, preventing one Sentry/Crashlytics event per failure when validating API response lists. Accepts the same `optional`, `strict`, and `escalate` parameters as `validate()`. Returns a `BatchValidationResult`.
+- `BatchValidationResult` — result type for `validateBatch()`. Fields: `isValid` (true only when every item passed), `results` (one `JsonValidationResult` per input item in order), `failureCount`, and `failureIndices` (zero-based indices of failing items). All list fields are unmodifiable.
+
 ## [0.1.1] - 2026-05-28
 
 ### Fixed
@@ -29,5 +35,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fallback logging via `dart:developer` when no logger is configured; suppressed in release builds — always call `configure()` or `silence()` in production code.
 - Zero runtime dependencies — pure Dart, works in Flutter, server, and CLI projects.
 
+[Unreleased]: https://github.com/IgeeTheron/json-sentinel/compare/v0.1.1...HEAD
 [0.1.1]: https://github.com/IgeeTheron/json-sentinel/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/IgeeTheron/json-sentinel/releases/tag/v0.1.0
