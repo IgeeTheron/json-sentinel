@@ -335,6 +335,17 @@ void main() {
       // Assert
       expect(logs.first, contains('1 of 1 item'));
     });
+
+    test('omitting context defaults to UnknownModel in log output', () {
+      // Act
+      JsonSentinel.validateBatch(
+        jsons: [missingId],
+        expectedTypes: schema,
+      );
+
+      // Assert
+      expect(logs.first, contains('[UnknownModel]'));
+    });
   });
 
   group('JsonSentinel.validateBatch — extras map —', () {
@@ -398,7 +409,60 @@ void main() {
       expect(capturedExtras.first!.containsKey('json_preview'), isFalse);
     });
 
-    test('no logger invocation when all items pass', () {
+    test('extras contains item_previews on failure', () {
+      // Act
+      JsonSentinel.validateBatch(
+        jsons: [missingId],
+        expectedTypes: schema,
+        context: 'Model',
+      );
+
+      // Assert
+      expect(capturedExtras.first!.containsKey('item_previews'), isTrue);
+    });
+
+    test('item_previews length equals failureCount', () {
+      // Act
+      JsonSentinel.validateBatch(
+        jsons: [validItem, missingId, wrongType],
+        expectedTypes: schema,
+        context: 'Model',
+      );
+
+      // Assert
+      final previews = capturedExtras.first!['item_previews'] as List<String>;
+      expect(previews.length, 2);
+    });
+
+    test('item_previews contains JSON content of each failing item', () {
+      // Act
+      JsonSentinel.validateBatch(
+        jsons: [missingId],
+        expectedTypes: schema,
+        context: 'Model',
+      );
+
+      // Assert — missingId is {'name': 'Alice'}, preview should contain 'name'
+      final previews = capturedExtras.first!['item_previews'] as List<String>;
+      expect(previews.first, contains('name'));
+    });
+
+    test('item_previews is in failureIndices order', () {
+      // Act
+      final result = JsonSentinel.validateBatch(
+        jsons: [validItem, missingId, wrongType],
+        expectedTypes: schema,
+        context: 'Model',
+      );
+
+      // Assert — failureIndices are [1, 2]; preview[0] should be for missingId, preview[1] for wrongType
+      final previews = capturedExtras.first!['item_previews'] as List<String>;
+      expect(previews.length, result.failureIndices.length);
+      expect(previews[0], contains('Alice')); // missingId has 'name': 'Alice'
+      expect(previews[1], contains('bad')); // wrongType has 'id': 'bad'
+    });
+
+    test('item_previews is absent when all items pass (no logger call)', () {
       // Act
       JsonSentinel.validateBatch(
         jsons: [validItem],
@@ -408,6 +472,17 @@ void main() {
 
       // Assert
       expect(capturedExtras, isEmpty);
+    });
+
+    test('extras[context] equals UnknownModel when context is omitted', () {
+      // Act
+      JsonSentinel.validateBatch(
+        jsons: [missingId],
+        expectedTypes: schema,
+      );
+
+      // Assert
+      expect(capturedExtras.first!['context'], 'UnknownModel');
     });
   });
 

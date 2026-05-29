@@ -165,15 +165,22 @@ class JsonSentinel {
   /// Validates each item in [jsons] against [expectedTypes] and returns a [BatchValidationResult].
   ///
   /// Runs all validations before emitting a single consolidated log entry, preventing one
-  /// log event per failure when processing a list of API payloads.
+  /// log event per failure when processing a list of API payloads. No log is emitted when
+  /// all items pass, including the vacuously-valid case of an empty [jsons] list (which
+  /// returns `isValid: true` with `failureCount: 0` immediately).
   ///
   /// Item indices in [BatchValidationResult.failureIndices] and in the log message are
   /// zero-based offsets into [jsons].
   ///
   /// [optional], [strict], and [escalate] behave identically to [validate].
-  /// [context] identifies the model in log output.
+  /// [context] identifies the model in log output. Defaults to `'UnknownModel'`.
   ///
-  /// No log is emitted when all items pass.
+  /// On failure the logger receives an [extras] map containing:
+  /// - `'context'` — the model name.
+  /// - `'failure_count'` — number of failing items (int).
+  /// - `'total_count'` — total items in the batch (int).
+  /// - `'item_previews'` — truncated JSON strings for each failing item, in
+  ///   [BatchValidationResult.failureIndices] order (`List<String>`).
   ///
   /// Example log output when 2 of 5 items fail:
   /// ```
@@ -187,12 +194,11 @@ class JsonSentinel {
   static BatchValidationResult validateBatch({
     required List<Map<String, dynamic>> jsons,
     required Map<String, List<Type?>?> expectedTypes,
-    required String context,
+    String context = 'UnknownModel',
     Set<String> optional = const {},
     bool strict = false,
     bool escalate = false,
   }) {
-    final StackTrace stackTrace = StackTrace.current;
     final List<JsonValidationResult> results = [];
     for (final Map<String, dynamic> json in jsons) {
       final List<String> errors = _validateCore(
@@ -216,12 +222,14 @@ class JsonSentinel {
       return batch;
     }
 
+    final StackTrace stackTrace = StackTrace.current;
     final String itemsWord = jsons.length == 1 ? 'item' : 'items';
     final StringBuffer buffer = StringBuffer(
       '[$context] JSON batch validation failed (${batch.failureCount} of ${jsons.length} $itemsWord failed):',
     );
     for (final int i in batch.failureIndices) {
       final List<String> errors = results[i].errors;
+      if (errors.isEmpty) continue;
       final String errWord = errors.length == 1 ? 'error' : 'errors';
       buffer.write('\n  Item $i (${errors.length} $errWord):');
       for (final String e in errors) {
@@ -236,6 +244,9 @@ class JsonSentinel {
         'context': context,
         'failure_count': batch.failureCount,
         'total_count': jsons.length,
+        'item_previews': <String>[
+          for (final int i in batch.failureIndices) _jsonPreview(jsons[i]),
+        ],
       },
       escalate: escalate,
     );

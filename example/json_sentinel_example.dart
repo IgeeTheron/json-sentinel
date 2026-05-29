@@ -17,9 +17,15 @@ import 'package:json_sentinel/json_sentinel.dart';
 //
 //   JsonSentinel.silence();
 
+// Holds the last extras map the logger received — used by the batch section below
+// to print item_previews. In a real app you would forward extras directly to
+// Sentry/Crashlytics inside the configure callback.
+Map<String, Object?>? _lastExtras;
+
 void main() {
   JsonSentinel.configure(
     (message, {error, stackTrace, extras, escalate}) {
+      _lastExtras = extras;
       print('[${escalate == true ? 'ERROR' : 'WARN'}] $message');
     },
   );
@@ -90,17 +96,56 @@ void main() {
     },
     context: 'UserRecord',
   );
+  // → [WARN] [UserRecord] JSON batch validation failed (2 of 4 items failed):
+  // →   Item 1 (1 error): ...
+  // →   Item 2 (1 error): ...
 
-  // One consolidated log entry fires above (not one per failing record).
-  print('${batch.failureCount} of ${records.length} records invalid (indices: ${batch.failureIndices})');
-  // → 2 of 4 records invalid (indices: [1, 2])
+  // --- Converting batch results to models ---
 
-  // Per-item results are still accessible for programmatic handling:
-  for (final i in batch.failureIndices) {
-    print('  Record $i: ${batch.results[i].errors.join('; ')}');
+  // Pattern A — strict: abort entirely if any item is invalid.
+  if (!batch.isValid) {
+    print('Strict abort: ${batch.failureCount} of ${records.length} records invalid, skipping all');
+    // → Strict abort: 2 of 4 records invalid, skipping all
   }
-  // → Record 1: Missing required key 'role'.
-  // → Record 2: Key 'id' has invalid type. Expected: int; Actual: String.
+
+  // Pattern B — lenient: skip invalid items, convert the valid ones.
+  //
+  // batch.results[i].isValid tells you which items passed. Items at failing
+  // indices are safe to skip; items at passing indices have all their types
+  // confirmed, so the casts in fromValidJson are guaranteed safe.
+  final users = <UserRecord>[
+    for (var i = 0; i < records.length; i++)
+      if (batch.results[i].isValid) UserRecord.fromValidJson(records[i]),
+  ];
+  print('Converted ${users.length} of ${records.length} records:');
+  // → Converted 2 of 4 records:
+  for (final user in users) {
+    print('  ${user.id} — ${user.name} (${user.role})');
+  }
+  // → 1 — Alice (admin)
+  // → 4 — Dave (editor)
+
+  // Pattern C — all failed: nothing to convert.
+  if (batch.failureCount == records.length) {
+    print('All records invalid — nothing to process');
+  }
+
+  // The logger extras map carries item_previews — one JSON preview per failing
+  // item in failureIndices order. Use them in your configure callback:
+  //
+  //   Sentry.captureMessage(message, hint: Hint.withMap({
+  //     'previews': extras?['item_previews'],  // List<String>
+  //   }));
+  //
+  // (Read from _lastExtras here for illustration only.)
+  final previews = _lastExtras?['item_previews'] as List<String>?;
+  if (previews != null) {
+    for (var k = 0; k < previews.length; k++) {
+      print('  Preview[${batch.failureIndices[k]}]: ${previews[k]}');
+    }
+  }
+  // → Preview[1]: {"id":2,"name":"Bob"}
+  // → Preview[2]: {"id":"three","name":"Carol","role":"viewer"}
 
   // --- 4. Strict mode — reject unexpected keys ------------------------------
 
@@ -121,6 +166,22 @@ void main() {
 // ---------------------------------------------------------------------------
 // Models
 // ---------------------------------------------------------------------------
+
+// Used by the validateBatch() section. fromValidJson() performs no validation —
+// call it only after validateBatch() confirms the item passed (results[i].isValid).
+class UserRecord {
+  final int id;
+  final String name;
+  final String role;
+
+  UserRecord({required this.id, required this.name, required this.role});
+
+  factory UserRecord.fromValidJson(Map<String, dynamic> json) => UserRecord(
+        id: json['id'] as int,
+        name: json['name'] as String,
+        role: json['role'] as String,
+      );
+}
 
 class OrderResponse {
   final int orderId;

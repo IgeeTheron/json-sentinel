@@ -28,6 +28,11 @@ class BatchValidationResult {
   ///
   /// [results] must be in the same order as the corresponding input items to ensure
   /// [failureIndices] correctly identifies each failing position.
+  ///
+  /// Failure results (where [JsonValidationResult.isValid] is `false`) should have
+  /// non-empty [JsonValidationResult.errors] lists. A [JsonValidationResult.failure]
+  /// constructed with an empty errors list will be counted in [failureIndices] but
+  /// will produce no bullet lines in the consolidated log message.
   factory BatchValidationResult.fromResults(List<JsonValidationResult> results) {
     final List<int> failureIndices = [
       for (int i = 0; i < results.length; i++)
