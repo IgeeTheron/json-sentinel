@@ -14,18 +14,19 @@ catching malformed API responses early with a single, readable log entry per fai
 - Nullable fields, union types (`[int, double]`), and optional fields all supported
 - Strict mode flags unexpected keys not declared in your schema
 - Single log entry per call listing every problem as a bullet — nothing hidden by an early return
-- Structured `json_preview` and `context` passed as extras for searchable Sentry/Crashlytics context
-- Configurable `escalate` flag per call — control whether a failure is a breadcrumb or a capture
-- Returns `JsonValidationResult` with `isValid` + programmatic `errors` list
+- **`validateBatch()`** — validates a list of payloads against a shared schema and emits one consolidated log entry for all failures, preventing duplicate Sentry/Crashlytics events when processing list endpoints
+- `json_preview` attached to single-item extras; `item_previews` (`List<String>`) attached to batch extras — one JSON preview per failing item (opt out with `generatePreviews: false`)
+- Configurable `escalate` flag per call — control whether a failure is a breadcrumb or a full capture
+- Returns `JsonValidationResult` with `isValid` + programmatic `errors` list; `validateBatch()` returns `BatchValidationResult` with per-item `results`, `failureCount`, and `failureIndices`
 - `silence()` for pure programmatic use with no log output
-- Optional `verbose: true` for debug-mode traces via `dart:developer`
+- Optional `verbose: true` for debug-mode traces via `dart:developer` — fires on init, every passing and failing call, and `json_preview` serialisation fallback
 - Zero runtime dependencies — pure Dart, works in Flutter, server, and CLI
 
 ## Getting started
 
 ```yaml
 dependencies:
-  json_sentinel: ^0.1.0
+  json_sentinel: ^0.2.0
 ```
 
 ## Usage
@@ -60,7 +61,28 @@ JsonSentinel.silence(); // installs a no-op logger — no output of any kind
 
 `silence()` and `configure()` are mutually exclusive — call one or the other, never both.
 
-### 2. Validate in `tryFromJson`
+### 2. Validate
+
+No model class required — validate any `Map<String, dynamic>` directly:
+
+```dart
+final result = JsonSentinel.validate(
+  json: responseMap,
+  expectedTypes: {'id': [int], 'name': [String], 'active': [bool]},
+  context: 'UserInput',
+);
+if (result.isValid) {
+  // types confirmed — safe to cast and use
+  final id = responseMap['id'] as int;
+}
+```
+
+Useful for scripts, middleware, configuration checks, and tests where you don't need
+a full model class — just a shape check before you proceed.
+
+#### In a `tryFromJson` factory
+
+For structured deserialisation, validate before casting:
 
 ```dart
 static OrderResponse? tryFromJson(Map<String, dynamic> json) {
@@ -83,6 +105,119 @@ static OrderResponse? tryFromJson(Map<String, dynamic> json) {
     depotCode: json['depotCode'] as String,
     litres:    (json['litres'] as num).toDouble(),
     notes:     json['notes'] as String?,
+  );
+}
+```
+
+### 3. Batch validation
+
+`validateBatch()` validates a list of payloads against a shared schema and emits exactly
+**one** consolidated log entry — no matter how many items fail. Use it instead of calling
+`validate()` in a loop when failures should produce a single Sentry event.
+
+```dart
+final batch = JsonSentinel.validateBatch(
+  jsons: payloads,              // List<Map<String, dynamic>>
+  expectedTypes: {
+    'id':   [int],
+    'name': [String],
+    'role': [String],
+  },
+  optional: {'role'},           // same optional/strict/escalate semantics as validate()
+  context: 'UserRecord',
+  escalate: true,
+  generatePreviews: true,       // set false to skip jsonEncode on each failing item
+);
+```
+
+`BatchValidationResult` fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `isValid` | `bool` | `true` only when every item passed |
+| `results` | `List<JsonValidationResult>` | One result per input item, in order |
+| `failureCount` | `int` | Number of failing items |
+| `failureIndices` | `List<int>` | Zero-based indices of failing items |
+
+#### Converting results to models
+
+```dart
+// Pattern A — strict: abort if any item is invalid
+if (!batch.isValid) return null;
+
+// Pattern B — lenient: skip invalid items, convert passing ones
+final users = [
+  for (var i = 0; i < payloads.length; i++)
+    if (batch.results[i].isValid) UserRecord.fromValidJson(payloads[i]),
+];
+
+// Pattern C — all failed
+if (batch.failureCount == payloads.length) {
+  // nothing valid to process
+}
+```
+
+#### Batch extras for Sentry
+
+On failure the logger receives `extras` with `'context'`, `'failure_count'` (int),
+`'total_count'` (int), and `'item_previews'` — a `List<String>` of truncated JSON
+snapshots for each failing item, in `failureIndices` order. Pass
+`generatePreviews: false` to omit `item_previews` and skip JSON serialisation for
+all failing items (useful for large high-failure batches):
+
+```dart
+Sentry.captureMessage(message, hint: Hint.withMap({
+  'previews': extras?['item_previews'], // List<String>
+}));
+```
+
+### Paginated responses
+
+When a list endpoint wraps items in an envelope object, use `validate()` for the outer
+shape and `validateBatch()` for the items inside. This produces at most two log entries —
+one if the envelope itself is malformed (worth escalating), one covering all item failures
+combined (a single breadcrumb, not one Sentry capture per bad record).
+
+```dart
+static PaginatedUserResponse? tryFromJson(Map<String, dynamic> json) {
+  // Step 1: validate the outer envelope — structural errors here are worth escalating.
+  final envelope = JsonSentinel.validate(
+    json: json,
+    expectedTypes: {
+      'current_page': [int],
+      'total':        [int],
+      'data':         [List],
+    },
+    context: 'UserPage',
+    escalate: true,
+  );
+  if (!envelope.isValid) return null;
+
+  // Step 2: validate every item inside data — one breadcrumb for all failures combined.
+  // Filter non-Map elements rather than using a lazy cast that throws at runtime.
+  final items = [
+    for (final item in json['data'] as List)
+      if (item is Map<String, dynamic>) item,
+  ];
+  final batch = JsonSentinel.validateBatch(
+    jsons: items,
+    expectedTypes: {
+      'id':   [int],
+      'name': [String],
+      'role': [String],
+    },
+    context: 'UserRecord',
+    escalate: false,
+  );
+
+  // Step 3: return the page with valid items (lenient: skip bad records, keep good ones).
+  return PaginatedUserResponse(
+    currentPage: json['current_page'] as int,
+    total:       json['total'] as int,
+    users: [
+      for (var i = 0; i < items.length; i++)
+        if (batch.results[i].isValid) UserRecord.fromValidJson(items[i]),
+    ],
   );
 }
 ```
@@ -173,10 +308,22 @@ if (!result.isValid) {
 
 ### Example log output
 
+Single-item failure:
+
 ```
 [OrderResponse] JSON validation failed (2 errors):
   • Key 'orderId' has invalid type. Expected: int; Actual: String.
   • Missing required key 'depotCode'.
+```
+
+Batch failure:
+
+```
+[UserRecord] JSON batch validation failed (2 of 4 items failed):
+  Item 1 (1 error):
+    • Missing required key 'role'.
+  Item 2 (1 error):
+    • Key 'id' has invalid type. Expected: int; Actual: String.
 ```
 
 ### Testing
@@ -201,7 +348,7 @@ tearDown(JsonSentinel.resetLoggerForTesting);
 | `[String]` | Required, must be `String` |
 | `[bool]` | Required, must be `bool` |
 | `[double]` | Required, must be `double` |
-| `[num]` | Required, `int` or `double` |
+| `[num]` | Required, `int` or `double` — prefer `[int, double]` when you want to signal intent explicitly |
 | `[int, double]` | Required, `int` or `double` (explicit union) |
 | `[Map]` | Required, any `Map` |
 | `[List]` | Required, any `List` |

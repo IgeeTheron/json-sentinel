@@ -24,5 +24,11 @@ class JsonValidationResult {
   static const JsonValidationResult success = JsonValidationResult._(isValid: true, errors: <String>[]);
 
   /// A failed result carrying [errors].
-  factory JsonValidationResult.failure(List<String> errors) => JsonValidationResult._(isValid: false, errors: List.unmodifiable(errors));
+  ///
+  /// [errors] must be non-empty — a failure with no error strings is semantically
+  /// contradictory and indicates a caller bug. Asserts in debug mode.
+  factory JsonValidationResult.failure(List<String> errors) {
+    assert(errors.isNotEmpty, 'JsonValidationResult.failure() requires at least one error string.');
+    return JsonValidationResult._(isValid: false, errors: List.unmodifiable(errors));
+  }
 }

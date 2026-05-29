@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:developer' as developer;
 
+import 'package:json_sentinel/src/batch_validation_result.dart';
 import 'package:json_sentinel/src/json_log_fn.dart';
 import 'package:json_sentinel/src/json_validation_result.dart';
 
@@ -133,6 +134,157 @@ class JsonSentinel {
     String context = 'UnknownModel',
   }) {
     final StackTrace stackTrace = StackTrace.current;
+    final List<String> errors = _validateCore(
+      json: json,
+      expectedTypes: expectedTypes,
+      optional: optional,
+      strict: strict,
+    );
+
+    if (errors.isNotEmpty) {
+      final String count = '${errors.length} error${errors.length == 1 ? '' : 's'}';
+      final String bullets = errors.map((e) => '  • $e').join('\n');
+      _log(
+        '[$context] JSON validation failed ($count):\n$bullets',
+        stackTrace: stackTrace,
+        extras: <String, Object?>{'context': context, 'json_preview': _jsonPreview(json)},
+        escalate: escalate,
+      );
+      if (_verbose) {
+        developer.log(
+          '[$context] validate() failed — ${errors.length} error(s).',
+          name: 'JsonSentinel',
+        );
+      }
+      return JsonValidationResult.failure(errors);
+    }
+
+    if (_verbose) {
+      developer.log(
+        '[$context] validate() passed — ${expectedTypes.length} key(s) checked.',
+        name: 'JsonSentinel',
+      );
+    }
+    return JsonValidationResult.success;
+  }
+
+  /// Validates each item in [jsons] against [expectedTypes] and returns a [BatchValidationResult].
+  ///
+  /// Runs all validations before emitting a single consolidated log entry, preventing one
+  /// log event per failure when processing a list of API payloads. No log is emitted when
+  /// all items pass, including the vacuously-valid case of an empty [jsons] list (which
+  /// returns `isValid: true` with `failureCount: 0` immediately).
+  ///
+  /// Item indices in [BatchValidationResult.failureIndices] and in the log message are
+  /// zero-based offsets into [jsons].
+  ///
+  /// [optional], [strict], and [escalate] behave identically to [validate].
+  /// [context] identifies the model in log output. Defaults to `'UnknownModel'`.
+  ///
+  /// When [generatePreviews] is `true` (the default), the logger receives an
+  /// `'item_previews'` key in [extras] containing a truncated JSON string for each
+  /// failing item — equivalent to the `'json_preview'` that [validate] attaches for
+  /// single-item calls. Set [generatePreviews] to `false` to skip JSON serialisation
+  /// for all failing items; useful for large high-failure batches where preview
+  /// generation would be costly.
+  ///
+  /// On failure the logger receives an [extras] map containing:
+  /// - `'context'` — the model name.
+  /// - `'failure_count'` — number of failing items (int).
+  /// - `'total_count'` — total items in the batch (int).
+  /// - `'item_previews'` — truncated JSON strings for each failing item, in
+  ///   `failureIndices` order (`List<String>`). Absent when [generatePreviews] is `false`.
+  ///
+  /// Example log output when 2 of 5 items fail:
+  /// ```
+  /// [OrderResponse] JSON batch validation failed (2 of 5 items failed):
+  ///   Item 1 (1 error):
+  ///     • Missing required key 'id'.
+  ///   Item 4 (2 errors):
+  ///     • Key 'status' has invalid type. Expected: String; Actual: int.
+  ///     • Key 'amount' cannot be null.
+  /// ```
+  static BatchValidationResult validateBatch({
+    required List<Map<String, dynamic>> jsons,
+    required Map<String, List<Type?>?> expectedTypes,
+    String context = 'UnknownModel',
+    Set<String> optional = const {},
+    bool strict = false,
+    bool escalate = false,
+    bool generatePreviews = true,
+  }) {
+    final StackTrace stackTrace = StackTrace.current;
+    final List<JsonValidationResult> results = [];
+    for (final Map<String, dynamic> json in jsons) {
+      final List<String> errors = _validateCore(
+        json: json,
+        expectedTypes: expectedTypes,
+        optional: optional,
+        strict: strict,
+      );
+      results.add(errors.isEmpty ? JsonValidationResult.success : JsonValidationResult.failure(errors));
+    }
+
+    final BatchValidationResult batch = BatchValidationResult.fromResults(results);
+
+    if (batch.failureCount == 0) {
+      if (_verbose) {
+        developer.log(
+          '[$context] validateBatch() passed — ${jsons.length} item(s) checked.',
+          name: 'JsonSentinel',
+        );
+      }
+      return batch;
+    }
+
+    final String itemsWord = jsons.length == 1 ? 'item' : 'items';
+    final StringBuffer buffer = StringBuffer(
+      '[$context] JSON batch validation failed (${batch.failureCount} of ${jsons.length} $itemsWord failed):',
+    );
+    for (final int i in batch.failureIndices) {
+      final List<String> errors = results[i].errors;
+      if (errors.isEmpty) continue;
+      final String errWord = errors.length == 1 ? 'error' : 'errors';
+      buffer.write('\n  Item $i (${errors.length} $errWord):');
+      for (final String e in errors) {
+        buffer.write('\n    • $e');
+      }
+    }
+
+    _log(
+      buffer.toString(),
+      stackTrace: stackTrace,
+      extras: <String, Object?>{
+        'context': context,
+        'failure_count': batch.failureCount,
+        'total_count': jsons.length,
+        if (generatePreviews)
+          'item_previews': <String>[
+            for (final int i in batch.failureIndices) _jsonPreview(jsons[i]),
+          ],
+      },
+      escalate: escalate,
+    );
+
+    if (_verbose) {
+      developer.log(
+        '[$context] validateBatch() failed — ${batch.failureCount} of ${jsons.length} item(s) invalid.',
+        name: 'JsonSentinel',
+      );
+    }
+
+    return batch;
+  }
+
+  /// Runs key-existence and type checks on [json] against [expectedTypes].
+  ///
+  /// Returns the collected error strings without any logging side-effects.
+  static List<String> _validateCore({
+    required Map<String, dynamic> json,
+    required Map<String, List<Type?>?> expectedTypes,
+    Set<String> optional = const {},
+    bool strict = false,
+  }) {
     final List<String> errors = [];
 
     for (final MapEntry<String, List<Type?>?> entry in expectedTypes.entries) {
@@ -173,25 +325,7 @@ class JsonSentinel {
       }
     }
 
-    if (errors.isNotEmpty) {
-      final String count = '${errors.length} error${errors.length == 1 ? '' : 's'}';
-      final String bullets = errors.map((e) => '  • $e').join('\n');
-      _log(
-        '[$context] JSON validation failed ($count):\n$bullets',
-        stackTrace: stackTrace,
-        extras: <String, Object?>{'context': context, 'json_preview': _jsonPreview(json)},
-        escalate: escalate,
-      );
-      return JsonValidationResult.failure(errors);
-    }
-
-    if (_verbose) {
-      developer.log(
-        '[$context] validate() passed — ${expectedTypes.length} key(s) checked.',
-        name: 'JsonSentinel',
-      );
-    }
-    return JsonValidationResult.success;
+    return errors;
   }
 
   /// Whether [val] matches [type].
