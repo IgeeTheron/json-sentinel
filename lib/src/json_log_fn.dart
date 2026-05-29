@@ -27,8 +27,8 @@
 ///   `'json_preview'` (truncated JSON string of the validated map).
 /// - [JsonSentinel.validateBatch]: always `'context'`, `'failure_count'` (int),
 ///   `'total_count'` (int), and `'item_previews'` (`List<String>` of truncated
-///   JSON strings for each failing item, in [BatchValidationResult.failureIndices]
-///   order). Does **not** include `'json_preview'`.
+///   JSON strings for each failing item, in `failureIndices` order).
+///   Does **not** include `'json_preview'`. Absent when `generatePreviews: false`.
 ///
 /// [escalate] hints that the failure warrants elevated capture (e.g. a Sentry
 /// event rather than a breadcrumb). Nullable so implementations may omit it

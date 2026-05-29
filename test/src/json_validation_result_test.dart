@@ -82,13 +82,9 @@ void main() {
       expect(() => result.errors.clear(), throwsUnsupportedError);
     });
 
-    test('wrapping an empty list gives isValid false and empty errors', () {
-      // Act
-      final result = JsonValidationResult.failure([]);
-
-      // Assert
-      expect(result.isValid, isFalse);
-      expect(result.errors, isEmpty);
+    test('throws AssertionError in debug mode when errors list is empty', () {
+      // Act & Assert — failure([]) is semantically contradictory; asserts in debug
+      expect(() => JsonValidationResult.failure([]), throwsA(isA<AssertionError>()));
     });
 
     test('should not alias the source list when mutations occur after construction', () {

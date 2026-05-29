@@ -22,8 +22,9 @@ void main() {
   //         Sentry.addBreadcrumb(Breadcrumb(message: message));
   //       }
   //     },
-  //     verbose: true, // emits dart:developer traces on init, success, and
-  //                    // json_preview fallback — independent of silence()
+  //     verbose: true, // emits dart:developer traces on init, each validate/
+  //                    // validateBatch call (pass or fail), and json_preview
+  //                    // fallback — independent of silence()
   //   );
   //
   // Use resetLoggerForTesting() in test tearDown to allow re-configuration:
@@ -221,7 +222,8 @@ void main() {
   //   'context'       — model name (String)
   //   'failure_count' — number of failing items (int)
   //   'total_count'   — total items in the batch (int)
-  //   'item_previews' — truncated JSON per failing item in failureIndices order (List<String>)
+  //   'item_previews' — truncated JSON per failing item in failureIndices order
+  //                     (List<String>); absent when generatePreviews: false
 
   final records = <Map<String, dynamic>>[
     {'id': 1, 'name': 'Alice', 'role': 'admin'},
@@ -316,6 +318,22 @@ void main() {
   print('batch optional: ${batchOpt.failureCount} of 2 failed');
   // → [WARN] [BatchOptional] JSON batch validation failed (1 of 2 items failed): ...
   // → batch optional: 1 of 2 failed
+
+  // generatePreviews: false — skip jsonEncode for every failing item.
+  // Use for large high-failure batches where preview generation would be costly.
+  JsonSentinel.validateBatch(
+    jsons: records,
+    expectedTypes: {
+      'id': [int],
+      'name': [String],
+      'role': [String],
+    },
+    context: 'UserRecord',
+    generatePreviews: false,
+  );
+  // → Same log message as above, but extras has no 'item_previews' key.
+  print('item_previews absent: ${!(_lastExtras?.containsKey('item_previews') ?? false)}');
+  // → item_previews absent: true
 
   // strict: unexpected keys in any item are reported as errors.
   final batchStrict = JsonSentinel.validateBatch(
@@ -416,8 +434,9 @@ class UserRecord {
       );
 }
 
-// Used by the paginated-responses section. Validates the outer envelope with
-// validate() then batch-validates every item in data[] with validateBatch().
+// Used by the 'Paginated responses' region. Demonstrates validate() +
+// validateBatch() combined — envelope validation followed by per-item batch
+// validation, producing at most two log entries regardless of item count.
 class PaginatedUserResponse {
   final int currentPage;
   final int total;
@@ -444,7 +463,12 @@ class PaginatedUserResponse {
     if (!envelope.isValid) return null;
 
     // Step 2: validate every item inside data — one breadcrumb for all failures.
-    final items = (json['data'] as List).cast<Map<String, dynamic>>();
+    // Filter non-Map elements out rather than using a lazy cast that would throw
+    // inside validateBatch() if the API returns unexpected element types.
+    final items = [
+      for (final item in json['data'] as List)
+        if (item is Map<String, dynamic>) item,
+    ];
     final batch = JsonSentinel.validateBatch(
       jsons: items,
       expectedTypes: {
@@ -505,8 +529,9 @@ class OrderResponse {
   }
 }
 
-// Validates the top-level paginated shape; delegates to MetaModel for the
-// meta sub-object so each level logs failures under its own context label.
+// Used by the 'Nested model validation' region. Demonstrates nested model
+// delegation — each level validates its own fields with a separate context label.
+// Compare PaginatedUserResponse above, which uses validateBatch() on the items.
 class PaginatedResponse {
   final List<dynamic> data;
   final Map<String, dynamic> links;

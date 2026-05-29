@@ -484,6 +484,34 @@ void main() {
       // Assert
       expect(capturedExtras.first!['context'], 'UnknownModel');
     });
+
+    test('item_previews is absent when generatePreviews is false', () {
+      // Act
+      JsonSentinel.validateBatch(
+        jsons: [missingId],
+        expectedTypes: schema,
+        context: 'Model',
+        generatePreviews: false,
+      );
+
+      // Assert
+      expect(capturedExtras.first!.containsKey('item_previews'), isFalse);
+    });
+
+    test('other extras keys are still present when generatePreviews is false', () {
+      // Act
+      JsonSentinel.validateBatch(
+        jsons: [missingId, wrongType],
+        expectedTypes: schema,
+        context: 'Model',
+        generatePreviews: false,
+      );
+
+      // Assert
+      expect(capturedExtras.first!['context'], 'Model');
+      expect(capturedExtras.first!['failure_count'], 2);
+      expect(capturedExtras.first!['total_count'], 2);
+    });
   });
 
   group('JsonSentinel.validateBatch — escalate parameter —', () {

@@ -150,6 +150,12 @@ class JsonSentinel {
         extras: <String, Object?>{'context': context, 'json_preview': _jsonPreview(json)},
         escalate: escalate,
       );
+      if (_verbose) {
+        developer.log(
+          '[$context] validate() failed — ${errors.length} error(s).',
+          name: 'JsonSentinel',
+        );
+      }
       return JsonValidationResult.failure(errors);
     }
 
@@ -175,12 +181,19 @@ class JsonSentinel {
   /// [optional], [strict], and [escalate] behave identically to [validate].
   /// [context] identifies the model in log output. Defaults to `'UnknownModel'`.
   ///
+  /// When [generatePreviews] is `true` (the default), the logger receives an
+  /// `'item_previews'` key in [extras] containing a truncated JSON string for each
+  /// failing item — equivalent to the `'json_preview'` that [validate] attaches for
+  /// single-item calls. Set [generatePreviews] to `false` to skip JSON serialisation
+  /// for all failing items; useful for large high-failure batches where preview
+  /// generation would be costly.
+  ///
   /// On failure the logger receives an [extras] map containing:
   /// - `'context'` — the model name.
   /// - `'failure_count'` — number of failing items (int).
   /// - `'total_count'` — total items in the batch (int).
   /// - `'item_previews'` — truncated JSON strings for each failing item, in
-  ///   [BatchValidationResult.failureIndices] order (`List<String>`).
+  ///   `failureIndices` order (`List<String>`). Absent when [generatePreviews] is `false`.
   ///
   /// Example log output when 2 of 5 items fail:
   /// ```
@@ -198,7 +211,9 @@ class JsonSentinel {
     Set<String> optional = const {},
     bool strict = false,
     bool escalate = false,
+    bool generatePreviews = true,
   }) {
+    final StackTrace stackTrace = StackTrace.current;
     final List<JsonValidationResult> results = [];
     for (final Map<String, dynamic> json in jsons) {
       final List<String> errors = _validateCore(
@@ -222,7 +237,6 @@ class JsonSentinel {
       return batch;
     }
 
-    final StackTrace stackTrace = StackTrace.current;
     final String itemsWord = jsons.length == 1 ? 'item' : 'items';
     final StringBuffer buffer = StringBuffer(
       '[$context] JSON batch validation failed (${batch.failureCount} of ${jsons.length} $itemsWord failed):',
@@ -244,12 +258,20 @@ class JsonSentinel {
         'context': context,
         'failure_count': batch.failureCount,
         'total_count': jsons.length,
-        'item_previews': <String>[
-          for (final int i in batch.failureIndices) _jsonPreview(jsons[i]),
-        ],
+        if (generatePreviews)
+          'item_previews': <String>[
+            for (final int i in batch.failureIndices) _jsonPreview(jsons[i]),
+          ],
       },
       escalate: escalate,
     );
+
+    if (_verbose) {
+      developer.log(
+        '[$context] validateBatch() failed — ${batch.failureCount} of ${jsons.length} item(s) invalid.',
+        name: 'JsonSentinel',
+      );
+    }
 
     return batch;
   }

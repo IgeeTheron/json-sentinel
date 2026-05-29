@@ -8,9 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- `JsonSentinel.validateBatch()` — validates a list of `Map<String, dynamic>` payloads against a shared schema and emits a single consolidated log entry covering all failures, preventing one Sentry/Crashlytics event per failure when validating API response lists. Accepts the same `optional`, `strict`, `escalate`, and `context` parameters as `validate()` (including the same `'UnknownModel'` default for `context`). Returns a `BatchValidationResult`.
+- `JsonSentinel.validateBatch()` — validates a list of `Map<String, dynamic>` payloads against a shared schema and emits a single consolidated log entry covering all failures, preventing one Sentry/Crashlytics event per failure when validating API response lists. Accepts the same `optional`, `strict`, `escalate`, and `context` parameters as `validate()` (including the same `'UnknownModel'` default for `context`). Accepts `generatePreviews: false` to skip per-item JSON serialisation for high-volume batches. Returns a `BatchValidationResult`.
 - `BatchValidationResult` — result type for `validateBatch()`. Fields: `isValid` (true only when every item passed), `results` (one `JsonValidationResult` per input item in order), `failureCount`, and `failureIndices` (zero-based indices of failing items). All list fields are unmodifiable.
-- `validateBatch()` logger extras include `'context'`, `'failure_count'` (int), `'total_count'` (int), and `'item_previews'` — a `List<String>` of truncated JSON previews for each failing item in `failureIndices` order, equivalent to the `'json_preview'` that `validate()` attaches for single-item calls.
+- `validateBatch()` logger extras include `'context'`, `'failure_count'` (int), `'total_count'` (int), and `'item_previews'` — a `List<String>` of truncated JSON previews for each failing item in `failureIndices` order. `item_previews` is absent when `generatePreviews: false` is passed.
+
+### Changed
+- `JsonValidationResult.failure()` now asserts in debug mode that the `errors` list is non-empty. A failure result with no errors is semantically contradictory. Callers passing `failure([])` will receive an `AssertionError` in debug builds (including `dart test`); release builds are unaffected.
+- `verbose: true` now emits a `dart:developer` trace on every **failing** `validate()` and `validateBatch()` call in addition to the existing passing-call traces. Failures are now visible in DevTools Logging even when a Sentry/Crashlytics logger is registered.
 
 ## [0.1.1] - 2026-05-28
 
