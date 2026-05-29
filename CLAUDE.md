@@ -49,6 +49,7 @@ Pure Dart package, zero runtime dependencies. Four source files under `lib/src/`
 - Line length: **150 characters** (`formatter: page_width: 150` in `analysis_options.yaml`)
 - **Package imports only** — `always_use_package_imports` is enforced; use `package:json_sentinel/...` not relative paths
 - Trailing commas required on multi-line parameter lists (`require_trailing_commas`)
+- **`// region Name` / `// endregion`** blocks are the project-wide structural convention — used in all `test/src/` files and in `example/json_sentinel_example.dart`
 
 ## CI
 
@@ -87,3 +88,5 @@ tearDown(JsonSentinel.resetLoggerForTesting);
 The test for double-`configure()` (and double-`silence()`) relies on Dart asserts being active (they always are in `dart test`).
 
 `json_sentinel_batch_test.dart` has a `verbose` group that calls `setUp(JsonSentinel.resetLoggerForTesting)` directly (overriding the outer `setUp`) so it can call `JsonSentinel.silence(verbose: true)` without triggering the double-configure assert.
+
+`example/json_sentinel_example.dart` calls `resetLoggerForTesting()` once mid-file to transition from `configure()` to `silence()` for the programmatic-access region. This is the only legitimate live use of `resetLoggerForTesting()` outside tests — it exists solely to demonstrate both logger modes in a single runnable file.

@@ -1,28 +1,36 @@
 // ignore_for_file: avoid_print
 import 'package:json_sentinel/json_sentinel.dart';
 
-// Configure once at app startup. In production forward to your error reporter:
-//
-//   JsonSentinel.configure(
-//     (message, {error, stackTrace, extras, escalate}) {
-//       if (escalate == true) {
-//         Sentry.captureMessage(message, hint: Hint.withMap(extras ?? {}));
-//       } else {
-//         Sentry.addBreadcrumb(Breadcrumb(message: message));
-//       }
-//     },
-//   );
-//
-// To suppress all log output and read errors from result.errors instead:
-//
-//   JsonSentinel.silence();
-
-// Holds the last extras map the logger received — used by the batch section below
-// to print item_previews. In a real app you would forward extras directly to
-// Sentry/Crashlytics inside the configure callback.
+// Captures the last extras map received by the logger — used in the batch
+// section to print item_previews. In a real app, forward extras directly
+// inside your configure() callback.
 Map<String, Object?>? _lastExtras;
 
 void main() {
+  // region Setup: configure() -----------------------------------------------
+  //
+  // Call configure() OR silence() exactly once at app startup — never both.
+  // configure() registers a JsonLogFn that receives every validation failure.
+  //
+  // In production, forward to your error reporter:
+  //
+  //   JsonSentinel.configure(
+  //     (message, {error, stackTrace, extras, escalate}) {
+  //       if (escalate == true) {
+  //         Sentry.captureMessage(message, hint: Hint.withMap(extras ?? {}));
+  //       } else {
+  //         Sentry.addBreadcrumb(Breadcrumb(message: message));
+  //       }
+  //     },
+  //     verbose: true, // emits dart:developer traces on init, success, and
+  //                    // json_preview fallback — independent of silence()
+  //   );
+  //
+  // Use resetLoggerForTesting() in test tearDown to allow re-configuration:
+  //
+  //   tearDown(JsonSentinel.resetLoggerForTesting);
+  //   // resets both _logger and _verbose
+
   JsonSentinel.configure(
     (message, {error, stackTrace, extras, escalate}) {
       _lastExtras = extras;
@@ -30,30 +38,152 @@ void main() {
     },
   );
 
-  // --- 1. validate() in a tryFromJson factory --------------------------------
+  // logger getter — null until configure() or silence() is called.
+  print('Logger configured: ${JsonSentinel.logger != null}');
+  // → Logger configured: true
+
+  // endregion
+
+  // region validate(): single-item validation --------------------------------
   //
-  // The typical pattern: validate once, return null on failure.
-  // Each failing key is reported in a single log entry.
+  // All parameters:
+  //   json          — the Map<String, dynamic> to validate
+  //   expectedTypes — schema: key → allowed types (include null to allow null)
+  //   context       — model name shown in log output; defaults to 'UnknownModel'
+  //   optional      — keys skipped when absent, type-checked when present
+  //   strict        — flag keys in json not declared in expectedTypes (see region 6)
+  //   escalate      — hint to logger for elevated capture; defaults to false
+  //
+  // All errors are collected before a single log entry fires — validate()
+  // never returns early. result.isValid is the primary guard.
 
-  final orderJson = <String, dynamic>{
-    'orderId': 42,
-    'depotCode': 'CPT01',
-    'litres': 500.0,
-    'notes': null,
-  };
+  // Standalone — no model class needed. Useful for scripts, middleware, tests,
+  // and config validation where you just need a shape check before proceeding.
+  final eventJson = <String, dynamic>{'event': 'purchase', 'amount': 99, 'currency': 'USD'};
+  final check = JsonSentinel.validate(
+    json: eventJson,
+    expectedTypes: {
+      'event': [String],
+      'amount': [int],
+      'currency': [String],
+    },
+    context: 'PurchaseEvent',
+  );
+  if (check.isValid) {
+    print('Event: ${eventJson['event']} — ${eventJson['amount']} ${eventJson['currency']}');
+  }
+  // → Event: purchase — 99 USD
 
-  final order = OrderResponse.tryFromJson(orderJson);
+  // Happy path — all types correct, optional key absent:
+  final order = OrderResponse.tryFromJson({'orderId': 42, 'depotCode': 'CPT01', 'litres': 500.0});
   if (order != null) {
     print('Order ${order.orderId} — ${order.litres}L from ${order.depotCode}');
     // → Order 42 — 500.0L from CPT01
   }
 
-  // --- 2. Nested response — each level validates its own fields --------------
-  //
-  // PaginatedResponse checks the top-level shape, then delegates to MetaModel
-  // for the meta sub-object. Failures are logged under separate context labels.
+  // Failure path — missing required key + type mismatch, one log entry covers both:
+  final badResult = JsonSentinel.validate(
+    json: <String, dynamic>{'depotCode': 'CPT01', 'litres': 'not-a-number'},
+    expectedTypes: {
+      'orderId': [int],
+      'depotCode': [String],
+      'litres': [int, double], // union — int or double accepted
+    },
+    context: 'OrderResponse',
+    escalate: true,
+  );
+  print('badResult.isValid: ${badResult.isValid}');
+  // → [ERROR] [OrderResponse] JSON validation failed (2 errors):
+  // →   • Missing required key 'orderId'.
+  // →   • Key 'litres' has invalid type. Expected: int, double; Actual: String.
+  // → badResult.isValid: false
 
-  final pageJson = <String, dynamic>{
+  // optional — keys skipped when absent, but type-checked when present.
+  // Absent key → passes silently. Present key with wrong type → logged as normal.
+  final optAbsent = JsonSentinel.validate(
+    json: <String, dynamic>{'id': 1},
+    expectedTypes: {
+      'id': [int],
+      'nickname': [String],
+    },
+    optional: {'nickname'},
+    context: 'Profile',
+  );
+  print('optional absent: ${optAbsent.isValid}');
+  // → optional absent: true   (no log — absent optional key is fine)
+
+  final optWrongType = JsonSentinel.validate(
+    json: <String, dynamic>{'id': 1, 'nickname': 99},
+    expectedTypes: {
+      'id': [int],
+      'nickname': [String],
+    },
+    optional: {'nickname'},
+    context: 'Profile',
+  );
+  print('optional present+wrong type: ${optWrongType.isValid}');
+  // → [WARN] [Profile] JSON validation failed (1 error):
+  // →   • Key 'nickname' has invalid type. Expected: String; Actual: int.
+  // → optional present+wrong type: false
+
+  // expectedTypes type syntax quick reference:
+  //   [int]          — exact single type
+  //   [int, double]  — union (either accepted)
+  //   [String, null] — nullable (String or null)
+  //   null or []     — existence-only (any value accepted, just checks key is present)
+
+  // endregion
+
+  // region silence(): programmatic error access ------------------------------
+  //
+  // silence() is the alternative to configure() — installs a no-op logger.
+  // Use it when you only need result.errors and do not want any log output.
+  //
+  // In a real app you would call silence() instead of configure() at startup.
+  // Here, resetLoggerForTesting() is used to switch modes within a single
+  // runnable file — it is a test-only API and should not appear in production.
+
+  JsonSentinel.resetLoggerForTesting(); // test-only: resets _logger and _verbose
+  JsonSentinel.silence();
+
+  final silentResult = JsonSentinel.validate(
+    json: <String, dynamic>{'id': 'not-an-int', 'name': 42},
+    expectedTypes: {
+      'id': [int],
+      'name': [String],
+    },
+    context: 'SilentModel',
+  );
+
+  // No logger fires — read errors directly from result.errors:
+  if (!silentResult.isValid) {
+    print('${silentResult.errors.length} validation error(s):');
+    for (final error in silentResult.errors) {
+      print('  — $error');
+    }
+  }
+  // → 2 validation error(s):
+  // →   — Key 'id' has invalid type. Expected: int; Actual: String.
+  // →   — Key 'name' has invalid type. Expected: String; Actual: int.
+
+  // Restore configure() for the remaining sections.
+  JsonSentinel.resetLoggerForTesting();
+  JsonSentinel.configure(
+    (message, {error, stackTrace, extras, escalate}) {
+      _lastExtras = extras;
+      print('[${escalate == true ? 'ERROR' : 'WARN'}] $message');
+    },
+  );
+
+  // endregion
+
+  // region Nested model validation -------------------------------------------
+  //
+  // Each model validates its own fields independently. Failures carry distinct
+  // context labels ('PaginatedResponse', 'MetaModel') so log entries are always
+  // attributable to the layer that produced them.
+
+  final page = PaginatedResponse.tryFromJson(<String, dynamic>{
     'data': <dynamic>[],
     'links': <String, dynamic>{'first': 'https://api.example.com/orders?page=1', 'last': null, 'prev': null, 'next': null},
     'meta': <String, dynamic>{
@@ -66,19 +196,32 @@ void main() {
       'to': null, // null when the page is empty
       'total': 0,
     },
-  };
+  });
 
-  final page = PaginatedResponse.tryFromJson(pageJson);
   if (page != null) {
     print('Page ${page.meta.currentPage} of ${page.meta.lastPage} — ${page.meta.total} total');
     // → Page 1 of 1 — 0 total
   }
 
-  // --- 3. validateBatch() — one log entry for all failures combined ----------
+  // endregion
+
+  // region validateBatch(): batch validation ---------------------------------
   //
-  // When iterating over a list of API payloads, validateBatch() fires a single
-  // consolidated log entry instead of one per failing record. This prevents
-  // duplicate Sentry/Crashlytics events when 20 payloads share the same fault.
+  // validateBatch() validates a list of payloads against a shared schema and
+  // emits exactly ONE consolidated log entry covering all failures. This prevents
+  // one Sentry event per bad record when processing a list endpoint.
+  //
+  // The returned BatchValidationResult carries:
+  //   isValid        — true only when every item passed
+  //   results        — one JsonValidationResult per input item, in order
+  //   failureCount   — number of failing items
+  //   failureIndices — zero-based indices of failing items (ascending)
+  //
+  // On failure the logger extras map contains:
+  //   'context'       — model name (String)
+  //   'failure_count' — number of failing items (int)
+  //   'total_count'   — total items in the batch (int)
+  //   'item_previews' — truncated JSON per failing item in failureIndices order (List<String>)
 
   final records = <Map<String, dynamic>>[
     {'id': 1, 'name': 'Alice', 'role': 'admin'},
@@ -95,80 +238,170 @@ void main() {
       'role': [String],
     },
     context: 'UserRecord',
+    escalate: true,
   );
-  // → [WARN] [UserRecord] JSON batch validation failed (2 of 4 items failed):
-  // →   Item 1 (1 error): ...
-  // →   Item 2 (1 error): ...
+  // → [ERROR] [UserRecord] JSON batch validation failed (2 of 4 items failed):
+  // →   Item 1 (1 error):
+  // →     • Missing required key 'role'.
+  // →   Item 2 (1 error):
+  // →     • Key 'id' has invalid type. Expected: int; Actual: String.
 
-  // --- Converting batch results to models ---
-
-  // Pattern A — strict: abort entirely if any item is invalid.
-  if (!batch.isValid) {
-    print('Strict abort: ${batch.failureCount} of ${records.length} records invalid, skipping all');
-    // → Strict abort: 2 of 4 records invalid, skipping all
+  // Per-item error detail from batch.results:
+  print('${batch.failureCount} of ${records.length} invalid:');
+  for (final i in batch.failureIndices) {
+    print('  Item $i: ${batch.results[i].errors.join('; ')}');
   }
+  // → 2 of 4 invalid:
+  // →   Item 1: Missing required key 'role'.
+  // →   Item 2: Key 'id' has invalid type. Expected: int; Actual: String.
 
-  // Pattern B — lenient: skip invalid items, convert the valid ones.
-  //
-  // batch.results[i].isValid tells you which items passed. Items at failing
-  // indices are safe to skip; items at passing indices have all their types
-  // confirmed, so the casts in fromValidJson are guaranteed safe.
-  final users = <UserRecord>[
-    for (var i = 0; i < records.length; i++)
-      if (batch.results[i].isValid) UserRecord.fromValidJson(records[i]),
-  ];
-  print('Converted ${users.length} of ${records.length} records:');
-  // → Converted 2 of 4 records:
-  for (final user in users) {
-    print('  ${user.id} — ${user.name} (${user.role})');
-  }
-  // → 1 — Alice (admin)
-  // → 4 — Dave (editor)
-
-  // Pattern C — all failed: nothing to convert.
-  if (batch.failureCount == records.length) {
-    print('All records invalid — nothing to process');
-  }
-
-  // The logger extras map carries item_previews — one JSON preview per failing
-  // item in failureIndices order. Use them in your configure callback:
+  // item_previews — one JSON snapshot per failing item, in failureIndices order.
+  // Forward them to Sentry in your configure() callback:
   //
   //   Sentry.captureMessage(message, hint: Hint.withMap({
-  //     'previews': extras?['item_previews'],  // List<String>
+  //     'previews': extras?['item_previews'], // List<String>
   //   }));
-  //
-  // (Read from _lastExtras here for illustration only.)
   final previews = _lastExtras?['item_previews'] as List<String>?;
   if (previews != null) {
     for (var k = 0; k < previews.length; k++) {
       print('  Preview[${batch.failureIndices[k]}]: ${previews[k]}');
     }
   }
-  // → Preview[1]: {"id":2,"name":"Bob"}
-  // → Preview[2]: {"id":"three","name":"Carol","role":"viewer"}
+  // →   Preview[1]: {"id":2,"name":"Bob"}
+  // →   Preview[2]: {"id":"three","name":"Carol","role":"viewer"}
 
-  // --- 4. Strict mode — reject unexpected keys ------------------------------
+  // --- Converting batch results to models -----------------------------------
 
-  final strictResult = JsonSentinel.validate(
-    json: <String, dynamic>{'id': 1, 'unexpected': 'surprise'},
+  // Pattern A — strict: abort entirely if any item is invalid.
+  if (!batch.isValid) {
+    print('Strict: ${batch.failureCount} invalid — aborting all');
+    // → Strict: 2 invalid — aborting all
+  }
+
+  // Pattern B — lenient: skip invalid items, convert passing ones.
+  // batch.results[i].isValid confirms all types — casts in fromValidJson are safe.
+  final users = <UserRecord>[
+    for (var i = 0; i < records.length; i++)
+      if (batch.results[i].isValid) UserRecord.fromValidJson(records[i]),
+  ];
+  print('Lenient: converted ${users.length} of ${records.length} records:');
+  for (final user in users) {
+    print('  ${user.id} — ${user.name} (${user.role})');
+  }
+  // → Lenient: converted 2 of 4 records:
+  // →   1 — Alice (admin)
+  // →   4 — Dave (editor)
+
+  // Pattern C — all failed: nothing to convert.
+  if (batch.failureCount == records.length) {
+    print('All records invalid — nothing to process');
+  }
+
+  // --- optional and strict apply per-item, same semantics as validate() -----
+
+  // optional: key absent across all items → passes; present with wrong type → fails.
+  final batchOpt = JsonSentinel.validateBatch(
+    jsons: [
+      {'id': 1, 'role': 'admin'}, // nickname absent — fine
+      {'id': 2, 'role': 'editor', 'nickname': 99}, // nickname present + wrong type
+    ],
     expectedTypes: {
       'id': [int],
+      'role': [String],
+      'nickname': [String],
+    },
+    optional: {'nickname'},
+    context: 'BatchOptional',
+  );
+  print('batch optional: ${batchOpt.failureCount} of 2 failed');
+  // → [WARN] [BatchOptional] JSON batch validation failed (1 of 2 items failed): ...
+  // → batch optional: 1 of 2 failed
+
+  // strict: unexpected keys in any item are reported as errors.
+  final batchStrict = JsonSentinel.validateBatch(
+    jsons: [
+      {'id': 1, 'role': 'admin'},
+      {'id': 2, 'role': 'editor', 'extra': true}, // unexpected key
+    ],
+    expectedTypes: {
+      'id': [int],
+      'role': [String],
     },
     strict: true,
-    context: 'StrictExample',
+    context: 'BatchStrict',
   );
-  print('Strict check valid: ${strictResult.isValid}');
-  // → [WARN] [StrictExample] JSON validation failed (1 error):
+  print('batch strict: ${batchStrict.failureCount} of 2 failed');
+  // → [WARN] [BatchStrict] JSON batch validation failed (1 of 2 items failed): ...
+  // → batch strict: 1 of 2 failed
+
+  // endregion
+
+  // region Paginated responses: validate() + validateBatch() together ----------
+  //
+  // The canonical combined pattern: validate() checks the outer envelope once,
+  // then validateBatch() validates every item inside data[], producing exactly
+  // one log entry for all item failures — not one Sentry capture per bad record.
+  //
+  // Envelope failure (wrong type for current_page) → escalate: true → full capture.
+  // Item failures (bad records inside data) → escalate: false → single breadcrumb.
+
+  final userPage = PaginatedUserResponse.tryFromJson(<String, dynamic>{
+    'current_page': 1,
+    'total': 4,
+    'data': <dynamic>[
+      {'id': 1, 'name': 'Alice', 'role': 'admin'},
+      {'id': 2, 'name': 'Bob'}, // missing 'role'
+      {'id': 'three', 'name': 'Carol', 'role': 'viewer'}, // wrong type for 'id'
+      {'id': 4, 'name': 'Dave', 'role': 'editor'},
+    ],
+  });
+  // → [WARN] [UserRecord] JSON batch validation failed (2 of 4 items failed):
+  // →   Item 1 (1 error):
+  // →     • Missing required key 'role'.
+  // →   Item 2 (1 error):
+  // →     • Key 'id' has invalid type. Expected: int; Actual: String.
+
+  if (userPage != null) {
+    print('Page ${userPage.currentPage} — ${userPage.users.length} of ${userPage.total} valid:');
+    for (final user in userPage.users) {
+      print('  ${user.name} (${user.role})');
+    }
+  }
+  // → Page 1 — 2 of 4 valid:
+  // →   Alice (admin)
+  // →   Dave (editor)
+
+  // endregion
+
+  // region Strict mode -------------------------------------------------------
+  //
+  // When strict: true, keys present in json but absent from expectedTypes are
+  // reported as errors. Catches API response drift and unexpected fields early.
+
+  final strictResult = JsonSentinel.validate(
+    json: <String, dynamic>{'id': 1, 'name': 'Alice', 'unexpected': 'surprise'},
+    expectedTypes: {
+      'id': [int],
+      'name': [String],
+    },
+    strict: true,
+    context: 'StrictModel',
+  );
+  print('Strict isValid: ${strictResult.isValid}');
+  // → [WARN] [StrictModel] JSON validation failed (1 error):
   // →   • Unexpected key 'unexpected'.
-  // → Strict check valid: false
+  // → Strict isValid: false
+
+  // endregion
 }
 
 // ---------------------------------------------------------------------------
 // Models
 // ---------------------------------------------------------------------------
 
-// Used by the validateBatch() section. fromValidJson() performs no validation —
-// call it only after validateBatch() confirms the item passed (results[i].isValid).
+// Used by the validateBatch() and paginated-responses sections.
+// fromValidJson() performs no validation — call it only after the relevant
+// validate/validateBatch call confirms the item passed.
 class UserRecord {
   final int id;
   final String name;
@@ -181,6 +414,58 @@ class UserRecord {
         name: json['name'] as String,
         role: json['role'] as String,
       );
+}
+
+// Used by the paginated-responses section. Validates the outer envelope with
+// validate() then batch-validates every item in data[] with validateBatch().
+class PaginatedUserResponse {
+  final int currentPage;
+  final int total;
+  final List<UserRecord> users;
+
+  PaginatedUserResponse({
+    required this.currentPage,
+    required this.total,
+    required this.users,
+  });
+
+  static PaginatedUserResponse? tryFromJson(Map<String, dynamic> json) {
+    // Step 1: validate the outer envelope — structural errors worth escalating.
+    final envelope = JsonSentinel.validate(
+      json: json,
+      expectedTypes: {
+        'current_page': [int],
+        'total': [int],
+        'data': [List],
+      },
+      context: 'UserPage',
+      escalate: true,
+    );
+    if (!envelope.isValid) return null;
+
+    // Step 2: validate every item inside data — one breadcrumb for all failures.
+    final items = (json['data'] as List).cast<Map<String, dynamic>>();
+    final batch = JsonSentinel.validateBatch(
+      jsons: items,
+      expectedTypes: {
+        'id': [int],
+        'name': [String],
+        'role': [String],
+      },
+      context: 'UserRecord',
+      escalate: false,
+    );
+
+    // Step 3: return the page — skip invalid items, keep valid ones.
+    return PaginatedUserResponse(
+      currentPage: json['current_page'] as int,
+      total: json['total'] as int,
+      users: [
+        for (var i = 0; i < items.length; i++)
+          if (batch.results[i].isValid) UserRecord.fromValidJson(items[i]),
+      ],
+    );
+  }
 }
 
 class OrderResponse {
