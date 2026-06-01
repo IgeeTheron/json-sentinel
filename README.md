@@ -16,6 +16,7 @@ catching malformed API responses early with a single, readable log entry per fai
 - Single log entry per call listing every problem as a bullet — nothing hidden by an early return
 - **`validateBatch()`** — validates a list of payloads against a shared schema and emits one consolidated log entry for all failures, preventing duplicate Sentry/Crashlytics events when processing list endpoints
 - `json_preview` attached to single-item extras; `item_previews` (`List<String>`) attached to batch extras — one JSON preview per failing item (opt out with `generatePreviews: false`)
+- `redactKeys` — mask sensitive top-level field values (passwords, tokens, API keys) in `json_preview` and `item_previews` before they reach Sentry/Crashlytics; custom `redactionPlaceholder` supported
 - Configurable `escalate` flag per call — control whether a failure is a breadcrumb or a full capture
 - Returns `JsonValidationResult` with `isValid` + programmatic `errors` list; `validateBatch()` returns `BatchValidationResult` with per-item `results`, `failureCount`, and `failureIndices`
 - `silence()` for pure programmatic use with no log output
@@ -26,7 +27,7 @@ catching malformed API responses early with a single, readable log entry per fai
 
 ```yaml
 dependencies:
-  json_sentinel: ^0.2.0
+  json_sentinel: ^0.3.0
 ```
 
 ## Usage
@@ -85,26 +86,26 @@ a full model class — just a shape check before you proceed.
 For structured deserialisation, validate before casting:
 
 ```dart
-static OrderResponse? tryFromJson(Map<String, dynamic> json) {
+static ProductListing? tryFromJson(Map<String, dynamic> json) {
   final result = JsonSentinel.validate(
     json: json,
     expectedTypes: {
-      'orderId':   [int],
-      'depotCode': [String],
-      'litres':    [int, double],   // union — API may return either
-      'notes':     [String, null],  // nullable
+      'productId':   [int],
+      'sku':         [String],
+      'price':       [int, double],   // union — API may return either
+      'description': [String, null],  // nullable
     },
-    optional: {'notes'},            // absent is fine; type-checked if present
-    context: 'OrderResponse',
+    optional: {'description'},        // absent is fine; type-checked if present
+    context: 'ProductListing',
     escalate: true,
   );
   if (!result.isValid) return null;
 
-  return OrderResponse(
-    orderId:   json['orderId'] as int,
-    depotCode: json['depotCode'] as String,
-    litres:    (json['litres'] as num).toDouble(),
-    notes:     json['notes'] as String?,
+  return ProductListing(
+    productId:   json['productId'] as int,
+    sku:         json['sku'] as String,
+    price:       (json['price'] as num).toDouble(),
+    description: json['description'] as String?,
   );
 }
 ```
@@ -295,6 +296,35 @@ JsonSentinel.validate(
 );
 ```
 
+### Redaction
+
+Pass `redactKeys` to `configure()` to mask sensitive top-level field values in every
+`json_preview` and `item_previews` snapshot sent to your error reporter. Values matching
+a listed key are replaced with `'[REDACTED]'` (or your custom placeholder) before the
+JSON is encoded — the validated data itself is never modified.
+
+```dart
+JsonSentinel.configure(
+  (message, {error, stackTrace, extras, escalate}) { ... },
+  redactKeys: {'password', 'token', 'apiKey', 'secret'},
+  redactionPlaceholder: '[REDACTED]', // optional, this is the default
+);
+```
+
+Given `{'userId': 42, 'password': 'hunter2', 'token': 'abc123'}`, the `json_preview`
+in extras becomes:
+
+```json
+{"userId": 42, "password": "[REDACTED]", "token": "[REDACTED]"}
+```
+
+Redaction applies to both `json_preview` (single-item) and `item_previews` (batch) — no
+separate configuration needed. Only top-level keys are redacted; nested object contents
+are not inspected.
+
+`silence()` accepts the same `redactKeys` and `redactionPlaceholder` parameters for
+consistency.
+
 ### Programmatic error access
 
 ```dart
@@ -311,9 +341,9 @@ if (!result.isValid) {
 Single-item failure:
 
 ```
-[OrderResponse] JSON validation failed (2 errors):
-  • Key 'orderId' has invalid type. Expected: int; Actual: String.
-  • Missing required key 'depotCode'.
+[ProductListing] JSON validation failed (2 errors):
+  • Key 'productId' has invalid type. Expected: int; Actual: String.
+  • Missing required key 'sku'.
 ```
 
 Batch failure:

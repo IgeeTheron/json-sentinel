@@ -34,15 +34,15 @@ class BatchValidationResult {
   /// constructed with an empty errors list will be counted in [failureIndices] but
   /// will produce no bullet lines in the consolidated log message.
   factory BatchValidationResult.fromResults(List<JsonValidationResult> results) {
-    final List<int> failureIndices = [
+    final List<int> failureIndices = <int>[
       for (int i = 0; i < results.length; i++)
         if (!results[i].isValid) i,
     ];
     return BatchValidationResult._(
       isValid: failureIndices.isEmpty,
-      results: List.unmodifiable(results),
+      results: List<JsonValidationResult>.unmodifiable(results),
       failureCount: failureIndices.length,
-      failureIndices: List.unmodifiable(failureIndices),
+      failureIndices: List<int>.unmodifiable(failureIndices),
     );
   }
 }

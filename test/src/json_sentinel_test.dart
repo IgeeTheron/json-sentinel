@@ -113,9 +113,9 @@ void main() {
     test('should return isValid true when value matches one of multiple allowed types', () {
       // Act
       final result = JsonSentinel.validate(
-        json: {'litres': 50},
+        json: {'price': 50},
         expectedTypes: {
-          'litres': [int, double],
+          'price': [int, double],
         },
       );
 
@@ -580,12 +580,12 @@ void main() {
         expectedTypes: {
           'id': [int],
         },
-        context: 'OrderResponse',
+        context: 'ProductListing',
       );
 
       // Assert
       expect(capturedExtras.first, isNotNull);
-      expect(capturedExtras.first!['context'], 'OrderResponse');
+      expect(capturedExtras.first!['context'], 'ProductListing');
     });
 
     test('should include a json_preview key in extras on failure', () {
@@ -1128,6 +1128,148 @@ void main() {
 
       // Assert — verbose must not alter the result
       expect(result.isValid, isFalse);
+    });
+
+    // endregion
+
+    // region Redaction — sensitive key values masked in json_preview.
+
+    test('should replace a redacted key value with the default placeholder in json_preview', () {
+      // Arrange — reset so configure() can be called with redactKeys.
+      JsonSentinel.resetLoggerForTesting();
+      JsonSentinel.configure(
+        (message, {error, stackTrace, extras, escalate}) {
+          capturedExtras.add(extras);
+        },
+        redactKeys: {'password'},
+      );
+
+      // Act
+      JsonSentinel.validate(
+        json: {'id': 42, 'password': 'secret123'},
+        expectedTypes: {
+          'missing': [int],
+        },
+        context: 'LoginPayload',
+      );
+
+      // Assert
+      final preview = capturedExtras.first!['json_preview'] as String;
+      expect(preview, contains('"password"'));
+      expect(preview, contains('[REDACTED]'));
+      expect(preview, isNot(contains('secret123')));
+    });
+
+    test('should leave non-redacted key values unchanged in json_preview', () {
+      // Arrange
+      JsonSentinel.resetLoggerForTesting();
+      JsonSentinel.configure(
+        (message, {error, stackTrace, extras, escalate}) {
+          capturedExtras.add(extras);
+        },
+        redactKeys: {'password'},
+      );
+
+      // Act
+      JsonSentinel.validate(
+        json: {'id': 42, 'password': 'secret123'},
+        expectedTypes: {
+          'missing': [int],
+        },
+        context: 'LoginPayload',
+      );
+
+      // Assert — 'id' is not in redactKeys; its value must appear in full.
+      final preview = capturedExtras.first!['json_preview'] as String;
+      expect(preview, contains('42'));
+    });
+
+    test('should use a custom redactionPlaceholder when provided', () {
+      // Arrange
+      JsonSentinel.resetLoggerForTesting();
+      JsonSentinel.configure(
+        (message, {error, stackTrace, extras, escalate}) {
+          capturedExtras.add(extras);
+        },
+        redactKeys: {'token'},
+        redactionPlaceholder: '***',
+      );
+
+      // Act
+      JsonSentinel.validate(
+        json: {'userId': 1, 'token': 'abc123'},
+        expectedTypes: {
+          'missing': [int],
+        },
+        context: 'TokenPayload',
+      );
+
+      // Assert
+      final preview = capturedExtras.first!['json_preview'] as String;
+      expect(preview, contains('***'));
+      expect(preview, isNot(contains('abc123')));
+    });
+
+    test('should not redact any values when redactKeys is not configured', () {
+      // Act — setUp installs a standard logger with no redactKeys.
+      JsonSentinel.validate(
+        json: {'id': 1, 'password': 'plain'},
+        expectedTypes: {
+          'missing': [int],
+        },
+        context: 'NoRedaction',
+      );
+
+      // Assert — 'password' value appears in the preview untouched.
+      final preview = capturedExtras.first!['json_preview'] as String;
+      expect(preview, contains('plain'));
+    });
+
+    test('should clear redactKeys after resetLoggerForTesting() so subsequent configure() shows plain values', () {
+      // Arrange — configure with redactKeys, then reset and reconfigure without.
+      JsonSentinel.resetLoggerForTesting();
+      JsonSentinel.configure(
+        (message, {error, stackTrace, extras, escalate}) {},
+        redactKeys: {'secret'},
+      );
+      JsonSentinel.resetLoggerForTesting();
+      JsonSentinel.configure(
+        (message, {error, stackTrace, extras, escalate}) {
+          capturedExtras.add(extras);
+        },
+      );
+
+      // Act
+      JsonSentinel.validate(
+        json: {'secret': 'value'},
+        expectedTypes: {
+          'missing': [int],
+        },
+        context: 'AfterReset',
+      );
+
+      // Assert — redactKeys was cleared; 'value' must appear in the preview.
+      final preview = capturedExtras.first!['json_preview'] as String;
+      expect(preview, contains('value'));
+    });
+
+    test('should not throw when silence() is called with redactKeys', () {
+      // silence() passes redactKeys through to configure(), but installs a no-op
+      // logger — capturedExtras is never populated, so only no-throw can be asserted
+      // here. Redaction behaviour is covered by the configure() tests above.
+      JsonSentinel.resetLoggerForTesting();
+      JsonSentinel.silence(redactKeys: {'apiKey'});
+
+      expect(
+        () => JsonSentinel.validate(
+          json: {'userId': 1, 'apiKey': 'sk-live-abc'},
+          expectedTypes: {
+            'missing': [int],
+          },
+          context: 'SilenceRedact',
+        ),
+        returnsNormally,
+      );
     });
 
     // endregion

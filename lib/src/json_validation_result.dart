@@ -29,6 +29,6 @@ class JsonValidationResult {
   /// contradictory and indicates a caller bug. Asserts in debug mode.
   factory JsonValidationResult.failure(List<String> errors) {
     assert(errors.isNotEmpty, 'JsonValidationResult.failure() requires at least one error string.');
-    return JsonValidationResult._(isValid: false, errors: List.unmodifiable(errors));
+    return JsonValidationResult._(isValid: false, errors: List<String>.unmodifiable(errors));
   }
 }

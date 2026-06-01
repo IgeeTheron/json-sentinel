@@ -7,6 +7,8 @@ linter:
   rules:
     # --- Correctness & Safety ---
     avoid_annotating_with_dynamic: true
+    avoid_bool_literals_in_conditional_expressions: true
+    noop_primitive_operations: true
     avoid_void_async: true
     cancel_subscriptions: true
     close_sinks: true
