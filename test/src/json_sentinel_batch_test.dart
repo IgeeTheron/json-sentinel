@@ -228,11 +228,11 @@ void main() {
       JsonSentinel.validateBatch(
         jsons: [missingId],
         expectedTypes: schema,
-        context: 'OrderResponse',
+        context: 'UserRecord',
       );
 
       // Assert
-      expect(logs.first, contains('[OrderResponse]'));
+      expect(logs.first, contains('[UserRecord]'));
     });
 
     test('message contains "batch validation failed"', () {
@@ -366,11 +366,11 @@ void main() {
       JsonSentinel.validateBatch(
         jsons: [missingId],
         expectedTypes: schema,
-        context: 'OrderResponse',
+        context: 'UserRecord',
       );
 
       // Assert
-      expect(capturedExtras.first!['context'], 'OrderResponse');
+      expect(capturedExtras.first!['context'], 'UserRecord');
     });
 
     test('extras[failure_count] equals number of failing items', () {
@@ -700,6 +700,61 @@ void main() {
         () => JsonSentinel.validateBatch(jsons: [missingId], expectedTypes: schema, context: 'Model'),
         returnsNormally,
       );
+    });
+  });
+
+  group('JsonSentinel.validateBatch — redaction —', () {
+    setUp(JsonSentinel.resetLoggerForTesting);
+
+    test('item_previews should contain the redaction placeholder for a redacted key', () {
+      // Arrange
+      JsonSentinel.configure(
+        (message, {error, stackTrace, extras, escalate}) {
+          capturedExtras.add(extras);
+        },
+        redactKeys: {'password'},
+      );
+
+      // Act
+      JsonSentinel.validateBatch(
+        jsons: [
+          {'id': 1, 'password': 'secret'},
+        ],
+        expectedTypes: {
+          'missing': [int],
+        },
+        context: 'BatchRedact',
+      );
+
+      // Assert
+      final previews = capturedExtras.first!['item_previews'] as List<String>;
+      expect(previews.first, contains('[REDACTED]'));
+      expect(previews.first, isNot(contains('secret')));
+    });
+
+    test('item_previews should leave non-redacted key values unchanged', () {
+      // Arrange
+      JsonSentinel.configure(
+        (message, {error, stackTrace, extras, escalate}) {
+          capturedExtras.add(extras);
+        },
+        redactKeys: {'password'},
+      );
+
+      // Act
+      JsonSentinel.validateBatch(
+        jsons: [
+          {'id': 99, 'password': 'secret'},
+        ],
+        expectedTypes: {
+          'missing': [int],
+        },
+        context: 'BatchRedact',
+      );
+
+      // Assert — 'id' is not in redactKeys; its value must appear in full.
+      final previews = capturedExtras.first!['item_previews'] as List<String>;
+      expect(previews.first, contains('99'));
     });
   });
 

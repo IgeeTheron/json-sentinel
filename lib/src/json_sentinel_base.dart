@@ -34,13 +34,13 @@ import 'package:json_sentinel/src/json_validation_result.dart';
 /// final result = JsonSentinel.validate(
 ///   json: responseJson,
 ///   expectedTypes: {
-///     'orderId': [int],
-///     'depotCode': [String],
-///     'litres': [int, double],
-///     'notes': [String, null], // nullable
+///     'productId': [int],
+///     'sku':       [String],
+///     'price':     [int, double],
+///     'description': [String, null], // nullable
 ///   },
-///   optional: {'notes'},       // present-or-absent is fine
-///   context: 'OrderResponse',
+///   optional: {'description'}, // present-or-absent is fine
+///   context: 'ProductListing',
 /// );
 /// if (!result.isValid) return null;
 /// ```
@@ -49,6 +49,8 @@ class JsonSentinel {
 
   static JsonLogFn? _logger;
   static bool _verbose = false;
+  static Set<String>? _redactKeys;
+  static String _redactionPlaceholder = '[REDACTED]';
 
   /// The configured [JsonLogFn], or `null` if neither [configure] nor [silence] has been called.
   static JsonLogFn? get logger => _logger;
@@ -66,7 +68,19 @@ class JsonSentinel {
   /// [validate] call, and a diagnostic when `jsonEncode` fails in the
   /// JSON preview. Verbose output is independent of [silence] — the two
   /// are orthogonal controls.
-  static void configure(JsonLogFn logFn, {bool verbose = false}) {
+  ///
+  /// Pass [redactKeys] to mask sensitive top-level field values in `json_preview`
+  /// and `item_previews` extras before they are forwarded to the logger. Any key
+  /// present in [redactKeys] has its value replaced with [redactionPlaceholder]
+  /// (defaults to `'[REDACTED]'`) in the preview string — the validated data
+  /// itself is never modified. Keys absent from [redactKeys] appear in previews
+  /// unchanged.
+  static void configure(
+    JsonLogFn logFn, {
+    bool verbose = false,
+    Set<String>? redactKeys,
+    String redactionPlaceholder = '[REDACTED]',
+  }) {
     assert(
       _logger == null,
       'JsonSentinel is already initialised — configure() or silence() has already been called. '
@@ -75,13 +89,22 @@ class JsonSentinel {
     if (_logger != null) return;
     _verbose = verbose;
     _logger = logFn;
+    _redactKeys = redactKeys;
+    _redactionPlaceholder = redactionPlaceholder;
     if (_verbose) developer.log('Logger configured.', name: 'JsonSentinel');
   }
 
-  /// Resets the logger and verbose flag to their initial state. For use in tests only.
+  /// Resets the logger, verbose flag, and redaction state to their initial values.
+  ///
+  /// Clears the registered [JsonLogFn], resets `verbose` to `false`, and clears
+  /// any `redactKeys` and `redactionPlaceholder` settings applied by a prior
+  /// [configure] or [silence] call. For use in tests only — call in `tearDown`
+  /// to allow re-configuration across test cases.
   static void resetLoggerForTesting() {
     _logger = null;
     _verbose = false;
+    _redactKeys = null;
+    _redactionPlaceholder = '[REDACTED]';
   }
 
   /// Suppresses all validation log output.
@@ -92,7 +115,20 @@ class JsonSentinel {
   ///
   /// Pass `verbose: true` to enable `dart:developer` trace logs while still
   /// suppressing the [JsonLogFn]. Verbose output is independent of silencing.
-  static void silence({bool verbose = false}) => configure((_, {error, stackTrace, extras, escalate}) {}, verbose: verbose);
+  ///
+  /// [redactKeys] and [redactionPlaceholder] behave identically to the
+  /// same-named parameters on [configure] and are passed through unchanged.
+  static void silence({
+    bool verbose = false,
+    Set<String>? redactKeys,
+    String redactionPlaceholder = '[REDACTED]',
+  }) =>
+      configure(
+        (_, {error, stackTrace, extras, escalate}) {},
+        verbose: verbose,
+        redactKeys: redactKeys,
+        redactionPlaceholder: redactionPlaceholder,
+      );
 
   /// Validates [json] against [expectedTypes] and returns a [JsonValidationResult].
   ///
@@ -121,9 +157,9 @@ class JsonSentinel {
   ///
   /// Example log output:
   /// ```
-  /// [OrderResponse] JSON validation failed (2 errors):
-  ///   • Key 'id' has invalid type. Expected: int; Actual: String.
-  ///   • Missing required key 'depotCode'.
+  /// [ProductListing] JSON validation failed (2 errors):
+  ///   • Key 'productId' has invalid type. Expected: int; Actual: String.
+  ///   • Missing required key 'sku'.
   /// ```
   static JsonValidationResult validate({
     required Map<String, dynamic> json,
@@ -197,12 +233,12 @@ class JsonSentinel {
   ///
   /// Example log output when 2 of 5 items fail:
   /// ```
-  /// [OrderResponse] JSON batch validation failed (2 of 5 items failed):
+  /// [UserRecord] JSON batch validation failed (2 of 5 items failed):
   ///   Item 1 (1 error):
-  ///     • Missing required key 'id'.
+  ///     • Missing required key 'name'.
   ///   Item 4 (2 errors):
-  ///     • Key 'status' has invalid type. Expected: String; Actual: int.
-  ///     • Key 'amount' cannot be null.
+  ///     • Key 'role' has invalid type. Expected: String; Actual: int.
+  ///     • Key 'active' cannot be null.
   /// ```
   static BatchValidationResult validateBatch({
     required List<Map<String, dynamic>> jsons,
@@ -370,13 +406,23 @@ class JsonSentinel {
 
   /// Truncated JSON preview (max 600 chars) for structured log extras.
   ///
-  /// Falls back to [Map.toString] when [jsonEncode] throws (e.g. [DateTime]).
+  /// If `redactKeys` was supplied to [configure] or [silence], values for any
+  /// matching top-level key are replaced with the configured `redactionPlaceholder`
+  /// before encoding — the original [json] map is not modified.
+  ///
+  /// Falls back to `json.toString()` when [jsonEncode] throws (e.g. [DateTime]).
   /// Emits a `dart:developer` diagnostic on the fallback path when verbose is enabled.
   static String _jsonPreview(Map<String, dynamic> json) {
     const int maxLen = 600;
+    final Map<String, dynamic> source = _redactKeys != null && _redactKeys!.isNotEmpty
+        ? {
+            for (final MapEntry<String, dynamic> entry in json.entries)
+              entry.key: _redactKeys!.contains(entry.key) ? _redactionPlaceholder : entry.value,
+          }
+        : json;
     String raw;
     try {
-      raw = jsonEncode(json);
+      raw = jsonEncode(source);
     } catch (e) {
       if (_verbose) {
         developer.log(
@@ -386,7 +432,7 @@ class JsonSentinel {
           error: e,
         );
       }
-      raw = json.toString();
+      raw = source.toString();
     }
     return raw.length <= maxLen ? raw : '${raw.substring(0, maxLen)}…';
   }

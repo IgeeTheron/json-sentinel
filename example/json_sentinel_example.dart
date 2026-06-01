@@ -30,7 +30,7 @@ void main() {
   // Use resetLoggerForTesting() in test tearDown to allow re-configuration:
   //
   //   tearDown(JsonSentinel.resetLoggerForTesting);
-  //   // resets both _logger and _verbose
+  //   // resets _logger, _verbose, _redactKeys, and _redactionPlaceholder
 
   JsonSentinel.configure(
     (message, {error, stackTrace, extras, escalate}) {
@@ -60,43 +60,43 @@ void main() {
 
   // Standalone — no model class needed. Useful for scripts, middleware, tests,
   // and config validation where you just need a shape check before proceeding.
-  final eventJson = <String, dynamic>{'event': 'purchase', 'amount': 99, 'currency': 'USD'};
+  final eventJson = <String, dynamic>{'event': 'page_view', 'screen': 'home', 'duration_ms': 320};
   final check = JsonSentinel.validate(
     json: eventJson,
     expectedTypes: {
       'event': [String],
-      'amount': [int],
-      'currency': [String],
+      'screen': [String],
+      'duration_ms': [int],
     },
-    context: 'PurchaseEvent',
+    context: 'AnalyticsEvent',
   );
   if (check.isValid) {
-    print('Event: ${eventJson['event']} — ${eventJson['amount']} ${eventJson['currency']}');
+    print('Event: ${eventJson['event']} — screen: ${eventJson['screen']} (${eventJson['duration_ms']}ms)');
   }
-  // → Event: purchase — 99 USD
+  // → Event: page_view — screen: home (320ms)
 
   // Happy path — all types correct, optional key absent:
-  final order = OrderResponse.tryFromJson({'orderId': 42, 'depotCode': 'CPT01', 'litres': 500.0});
-  if (order != null) {
-    print('Order ${order.orderId} — ${order.litres}L from ${order.depotCode}');
-    // → Order 42 — 500.0L from CPT01
+  final listing = ProductListing.tryFromJson({'productId': 42, 'sku': 'WIDGET-XL', 'price': 19.99});
+  if (listing != null) {
+    print('Product ${listing.productId} — ${listing.sku} at \$${listing.price}');
+    // → Product 42 — WIDGET-XL at $19.99
   }
 
   // Failure path — missing required key + type mismatch, one log entry covers both:
   final badResult = JsonSentinel.validate(
-    json: <String, dynamic>{'depotCode': 'CPT01', 'litres': 'not-a-number'},
+    json: <String, dynamic>{'sku': 'WIDGET-XL', 'price': 'not-a-number'},
     expectedTypes: {
-      'orderId': [int],
-      'depotCode': [String],
-      'litres': [int, double], // union — int or double accepted
+      'productId': [int],
+      'sku': [String],
+      'price': [int, double], // union — int or double accepted
     },
-    context: 'OrderResponse',
+    context: 'ProductListing',
     escalate: true,
   );
   print('badResult.isValid: ${badResult.isValid}');
-  // → [ERROR] [OrderResponse] JSON validation failed (2 errors):
-  // →   • Missing required key 'orderId'.
-  // →   • Key 'litres' has invalid type. Expected: int, double; Actual: String.
+  // → [ERROR] [ProductListing] JSON validation failed (2 errors):
+  // →   • Missing required key 'productId'.
+  // →   • Key 'price' has invalid type. Expected: int, double; Actual: String.
   // → badResult.isValid: false
 
   // optional — keys skipped when absent, but type-checked when present.
@@ -144,7 +144,7 @@ void main() {
   // Here, resetLoggerForTesting() is used to switch modes within a single
   // runnable file — it is a test-only API and should not appear in production.
 
-  JsonSentinel.resetLoggerForTesting(); // test-only: resets _logger and _verbose
+  JsonSentinel.resetLoggerForTesting(); // test-only: resets _logger, _verbose, and redaction state
   JsonSentinel.silence();
 
   final silentResult = JsonSentinel.validate(
@@ -186,13 +186,13 @@ void main() {
 
   final page = PaginatedResponse.tryFromJson(<String, dynamic>{
     'data': <dynamic>[],
-    'links': <String, dynamic>{'first': 'https://api.example.com/orders?page=1', 'last': null, 'prev': null, 'next': null},
+    'links': <String, dynamic>{'first': 'https://api.example.com/products?page=1', 'last': null, 'prev': null, 'next': null},
     'meta': <String, dynamic>{
       'current_page': 1,
       'from': null, // null when the page is empty
       'last_page': 1,
       'links': <dynamic>[],
-      'path': 'https://api.example.com/orders',
+      'path': 'https://api.example.com/products',
       'per_page': 15,
       'to': null, // null when the page is empty
       'total': 0,
@@ -411,6 +411,100 @@ void main() {
   // → Strict isValid: false
 
   // endregion
+
+  // region redactKeys: mask sensitive values in json_preview -----------------
+  //
+  // Pass redactKeys to configure() to mask named top-level fields before any
+  // json_preview or item_previews snapshot is sent to Sentry/Crashlytics.
+  // The redaction placeholder defaults to '[REDACTED]' and can be overridden.
+  // The validated data itself is never modified — only the preview string is affected.
+  //
+  // In a real app call configure() once at startup with redactKeys.
+  // Here, resetLoggerForTesting() lets us switch configurations mid-file.
+
+  JsonSentinel.resetLoggerForTesting();
+  JsonSentinel.configure(
+    (message, {error, stackTrace, extras, escalate}) {
+      _lastExtras = extras;
+      print('[${escalate == true ? 'ERROR' : 'WARN'}] $message');
+    },
+    redactKeys: {'apiKey', 'password'},
+  );
+
+  JsonSentinel.validate(
+    json: <String, dynamic>{
+      'userId': 7,
+      'email': 'alice@example.com',
+      'apiKey': 'sk-live-abc123', // sensitive — will be masked in json_preview
+      'password': 'hunter2', // sensitive — will be masked in json_preview
+    },
+    expectedTypes: {
+      'missing_field': [int], // deliberately missing to trigger the log
+    },
+    context: 'LoginPayload',
+  );
+  // → [WARN] [LoginPayload] JSON validation failed (1 error): ...
+  // → json_preview: {"userId":7,"email":"alice@example.com","apiKey":"[REDACTED]","password":"[REDACTED]"}
+  final redactedPreview = _lastExtras?['json_preview'] as String?;
+  print('preview contains [REDACTED]: ${redactedPreview?.contains('[REDACTED]') ?? false}');
+  // → preview contains [REDACTED]: true
+  print('preview hides password: ${!(redactedPreview?.contains('hunter2') ?? true)}');
+  // → preview hides password: true
+
+  // Custom placeholder — override the default '[REDACTED]' string.
+  JsonSentinel.resetLoggerForTesting();
+  JsonSentinel.configure(
+    (message, {error, stackTrace, extras, escalate}) {
+      _lastExtras = extras;
+      print('[${escalate == true ? 'ERROR' : 'WARN'}] $message');
+    },
+    redactKeys: {'token'},
+    redactionPlaceholder: '***',
+  );
+  JsonSentinel.validate(
+    json: <String, dynamic>{'userId': 1, 'token': 'bearer-xyz'},
+    expectedTypes: {
+      'missing': [int],
+    },
+    context: 'TokenPayload',
+  );
+  final tokenPreview = _lastExtras?['json_preview'] as String?;
+  print('custom placeholder present: ${tokenPreview?.contains('***') ?? false}');
+  // → custom placeholder present: true
+
+  // item_previews in validateBatch() are also redacted automatically —
+  // no separate configuration needed.
+  JsonSentinel.resetLoggerForTesting();
+  JsonSentinel.configure(
+    (message, {error, stackTrace, extras, escalate}) {
+      _lastExtras = extras;
+      print('[${escalate == true ? 'ERROR' : 'WARN'}] $message');
+    },
+    redactKeys: {'password'},
+  );
+  JsonSentinel.validateBatch(
+    jsons: [
+      {'userId': 1, 'password': 'topsecret'},
+    ],
+    expectedTypes: {
+      'missing': [int],
+    },
+    context: 'BatchRedact',
+  );
+  final batchPreviews = _lastExtras?['item_previews'] as List<String>?;
+  print('batch preview redacted: ${batchPreviews?.first.contains('[REDACTED]') ?? false}');
+  // → batch preview redacted: true
+
+  // Restore a plain logger for any code that follows.
+  JsonSentinel.resetLoggerForTesting();
+  JsonSentinel.configure(
+    (message, {error, stackTrace, extras, escalate}) {
+      _lastExtras = extras;
+      print('[${escalate == true ? 'ERROR' : 'WARN'}] $message');
+    },
+  );
+
+  // endregion
 }
 
 // ---------------------------------------------------------------------------
@@ -492,39 +586,41 @@ class PaginatedUserResponse {
   }
 }
 
-class OrderResponse {
-  final int orderId;
-  final String depotCode;
-  final double litres;
-  final String? notes;
+// Used by the single-item validate() happy-path section. Demonstrates the
+// tryFromJson pattern: validate first, cast only after isValid is confirmed.
+class ProductListing {
+  final int productId;
+  final String sku;
+  final double price;
+  final String? description;
 
-  OrderResponse({
-    required this.orderId,
-    required this.depotCode,
-    required this.litres,
-    this.notes,
+  ProductListing({
+    required this.productId,
+    required this.sku,
+    required this.price,
+    this.description,
   });
 
-  static OrderResponse? tryFromJson(Map<String, dynamic> json) {
+  static ProductListing? tryFromJson(Map<String, dynamic> json) {
     final result = JsonSentinel.validate(
       json: json,
       expectedTypes: {
-        'orderId': [int],
-        'depotCode': [String],
-        'litres': [int, double], // union — API may return either
-        'notes': [String, null], // nullable
+        'productId': [int],
+        'sku': [String],
+        'price': [int, double], // union — API may return either
+        'description': [String, null], // nullable
       },
-      optional: {'notes'}, // absent is fine; type-checked when present
-      context: 'OrderResponse',
+      optional: {'description'}, // absent is fine; type-checked when present
+      context: 'ProductListing',
       escalate: true,
     );
     if (!result.isValid) return null;
 
-    return OrderResponse(
-      orderId: json['orderId'] as int,
-      depotCode: json['depotCode'] as String,
-      litres: (json['litres'] as num).toDouble(),
-      notes: json['notes'] as String?,
+    return ProductListing(
+      productId: json['productId'] as int,
+      sku: json['sku'] as String,
+      price: (json['price'] as num).toDouble(),
+      description: json['description'] as String?,
     );
   }
 }

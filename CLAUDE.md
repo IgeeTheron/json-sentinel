@@ -24,16 +24,17 @@ dart run example/json_sentinel_example.dart           # run the example
 
 Pure Dart package, zero runtime dependencies. Four source files under `lib/src/`, all re-exported from the `lib/json_sentinel.dart` barrel:
 
-- **`json_sentinel_base.dart`** — `JsonSentinel`, the only class callers interact with. All methods are static; the class cannot be instantiated. Owns two global mutable fields: `_logger` (`JsonLogFn?`) and `_verbose` (`bool`). Public API: `configure()`, `silence()`, `resetLoggerForTesting()`, `logger` getter, `validate()`, and `validateBatch()`.
+- **`json_sentinel_base.dart`** — `JsonSentinel`, the only class callers interact with. All methods are static; the class cannot be instantiated. Owns four global mutable fields: `_logger` (`JsonLogFn?`), `_verbose` (`bool`), `_redactKeys` (`Set<String>?`), and `_redactionPlaceholder` (`String`). Public API: `configure()`, `silence()`, `resetLoggerForTesting()`, `logger` getter, `validate()`, and `validateBatch()`.
 - **`json_validation_result.dart`** — `JsonValidationResult`, returned by `validate()` and stored per-item inside `BatchValidationResult`. Two named constructors: `JsonValidationResult.success` (a `const` singleton) and `JsonValidationResult.failure(errors)`. The `errors` list is always unmodifiable.
 - **`batch_validation_result.dart`** — `BatchValidationResult`, returned by `validateBatch()`. Public factory `fromResults(List<JsonValidationResult>)` computes `isValid`, `failureCount`, and `failureIndices` in one pass. All list fields are unmodifiable.
 - **`json_log_fn.dart`** — `JsonLogFn` typedef only. Kept separate so consumers can reference the function signature without importing the full library.
 
 ### Key design decisions
 
-- **`_logger` and `_verbose` are global mutable state.** Tests install a capturing logger in `setUp` and must call `resetLoggerForTesting()` in `tearDown`. `resetLoggerForTesting()` resets both fields; omitting it in `tearDown` causes cross-test pollution.
+- **Four fields are global mutable state: `_logger`, `_verbose`, `_redactKeys`, `_redactionPlaceholder`.** Tests install a capturing logger in `setUp` and must call `resetLoggerForTesting()` in `tearDown`. `resetLoggerForTesting()` resets all four fields; omitting it in `tearDown` causes cross-test pollution.
 - **`configure()` / `silence()` dual guard.** An `assert` fires in debug mode (tests always run with asserts) and a `if (_logger != null) return` guard silently prevents overwrite in release builds — first registration wins. The assert message names both `configure()` and `silence()` as initialisation paths.
-- **`configure()` and `silence()` are mutually exclusive.** `silence()` delegates to `configure()` with a no-op lambda. Calling both asserts in debug mode. Both accept an optional `verbose: bool` parameter (default `false`).
+- **`configure()` and `silence()` are mutually exclusive.** `silence()` delegates to `configure()` with a no-op lambda. Calling both asserts in debug mode. Both accept optional `verbose: bool` (default `false`), `redactKeys: Set<String>?` (default `null`), and `redactionPlaceholder: String` (default `'[REDACTED]'`) parameters.
+- **`redactKeys` masks sensitive top-level field values in previews.** When set, `_jsonPreview()` replaces matching key values with `_redactionPlaceholder` before encoding — the validated `Map` is never mutated. Applies to both `json_preview` (single-item) and `item_previews` (batch). An empty or null `redactKeys` is a no-op.
 - **`verbose` controls all `dart:developer` output independently of `silence()`.** When `true`: emits a confirmation on init, a success or failure trace on every `validate()` / `validateBatch()` call, and a diagnostic when `jsonEncode` fails in `_jsonPreview`. `silence()` has no effect on `developer.log` — the two are orthogonal. The failure traces fire in addition to the configured `JsonLogFn`, so DevTools Logging reflects failures even when a Sentry/Crashlytics logger is registered.
 - **Fallback logger uses `dart:developer`, not `print`.** When no logger is configured, `_log` emits via `developer.log(name: 'JsonSentinel')`. This is suppressed in release builds — always call `configure()` or `silence()` in production code.
 - **`validate()` and `validateBatch()` never return early.** All errors are collected before any log call is emitted. For `validateBatch()` this means all items are validated first; a single consolidated log entry fires at the end only if at least one item fails.
@@ -84,10 +85,10 @@ setUp(() {
 tearDown(JsonSentinel.resetLoggerForTesting);
 ```
 
-`resetLoggerForTesting()` must be called in `tearDown` whether the test used `configure()` or `silence()` — both set `_logger` and both must be reset. The `verbose` flag is also reset by `resetLoggerForTesting()`.
+`resetLoggerForTesting()` must be called in `tearDown` whether the test used `configure()` or `silence()` — both set `_logger` and both must be reset. It resets all four global fields (`_logger`, `_verbose`, `_redactKeys`, `_redactionPlaceholder`).
 
 The test for double-`configure()` (and double-`silence()`) relies on Dart asserts being active (they always are in `dart test`).
 
-`json_sentinel_batch_test.dart` has a `verbose` group that calls `setUp(JsonSentinel.resetLoggerForTesting)` directly (overriding the outer `setUp`) so it can call `JsonSentinel.silence(verbose: true)` without triggering the double-configure assert.
+`json_sentinel_batch_test.dart` and `json_sentinel_test.dart` both have groups (`verbose`, `redaction`) that call `setUp(JsonSentinel.resetLoggerForTesting)` directly (overriding the outer `setUp`) so they can call `configure()` or `silence()` with non-default options without triggering the double-configure assert.
 
-`example/json_sentinel_example.dart` calls `resetLoggerForTesting()` once mid-file to transition from `configure()` to `silence()` for the programmatic-access region. This is the only legitimate live use of `resetLoggerForTesting()` outside tests — it exists solely to demonstrate both logger modes in a single runnable file.
+`example/json_sentinel_example.dart` calls `resetLoggerForTesting()` multiple times mid-file to switch between logger configurations for different demonstration sections. This is the only legitimate live use of `resetLoggerForTesting()` outside tests.
