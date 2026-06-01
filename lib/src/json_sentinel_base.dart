@@ -124,7 +124,7 @@ class JsonSentinel {
     String redactionPlaceholder = '[REDACTED]',
   }) =>
       configure(
-        (_, {error, stackTrace, extras, escalate}) {},
+        (String _, {Object? error, StackTrace? stackTrace, Map<String, Object?>? extras, bool? escalate}) {},
         verbose: verbose,
         redactKeys: redactKeys,
         redactionPlaceholder: redactionPlaceholder,
@@ -164,7 +164,7 @@ class JsonSentinel {
   static JsonValidationResult validate({
     required Map<String, dynamic> json,
     required Map<String, List<Type?>?> expectedTypes,
-    Set<String> optional = const {},
+    Set<String> optional = const <String>{},
     bool strict = false,
     bool escalate = false,
     String context = 'UnknownModel',
@@ -179,7 +179,7 @@ class JsonSentinel {
 
     if (errors.isNotEmpty) {
       final String count = '${errors.length} error${errors.length == 1 ? '' : 's'}';
-      final String bullets = errors.map((e) => '  • $e').join('\n');
+      final String bullets = errors.map((String e) => '  • $e').join('\n');
       _log(
         '[$context] JSON validation failed ($count):\n$bullets',
         stackTrace: stackTrace,
@@ -244,13 +244,13 @@ class JsonSentinel {
     required List<Map<String, dynamic>> jsons,
     required Map<String, List<Type?>?> expectedTypes,
     String context = 'UnknownModel',
-    Set<String> optional = const {},
+    Set<String> optional = const <String>{},
     bool strict = false,
     bool escalate = false,
     bool generatePreviews = true,
   }) {
     final StackTrace stackTrace = StackTrace.current;
-    final List<JsonValidationResult> results = [];
+    final List<JsonValidationResult> results = <JsonValidationResult>[];
     for (final Map<String, dynamic> json in jsons) {
       final List<String> errors = _validateCore(
         json: json,
@@ -318,10 +318,10 @@ class JsonSentinel {
   static List<String> _validateCore({
     required Map<String, dynamic> json,
     required Map<String, List<Type?>?> expectedTypes,
-    Set<String> optional = const {},
+    Set<String> optional = const <String>{},
     bool strict = false,
   }) {
-    final List<String> errors = [];
+    final List<String> errors = <String>[];
 
     for (final MapEntry<String, List<Type?>?> entry in expectedTypes.entries) {
       final String key = entry.key;
@@ -373,8 +373,8 @@ class JsonSentinel {
   static bool _isTypeOf(Object? val, Type? type) {
     if (type == null) return val == null;
 
-    if (type == Map) return val is Map;
-    if (type == List) return val is List;
+    if (type == Map<dynamic, dynamic>) return val is Map<dynamic, dynamic>;
+    if (type == List<dynamic>) return val is List<dynamic>;
 
     if (type == String) return val is String;
     if (type == bool) return val is bool;
@@ -394,7 +394,7 @@ class JsonSentinel {
     if (_logger != null) {
       _logger!(message, stackTrace: stackTrace, extras: extras, escalate: escalate);
     } else {
-      final buffer = StringBuffer(message);
+      final StringBuffer buffer = StringBuffer(message);
       if (extras != null && extras.isNotEmpty) {
         for (final MapEntry<String, Object?> entry in extras.entries) {
           buffer.write('\n  ${entry.key}: ${entry.value}');
@@ -415,7 +415,7 @@ class JsonSentinel {
   static String _jsonPreview(Map<String, dynamic> json) {
     const int maxLen = 600;
     final Map<String, dynamic> source = _redactKeys != null && _redactKeys!.isNotEmpty
-        ? {
+        ? <String, dynamic>{
             for (final MapEntry<String, dynamic> entry in json.entries)
               entry.key: _redactKeys!.contains(entry.key) ? _redactionPlaceholder : entry.value,
           }
