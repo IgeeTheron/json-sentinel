@@ -1253,15 +1253,13 @@ void main() {
       expect(preview, contains('value'));
     });
 
-    test('should redact via silence() when redactKeys is provided', () {
-      // Arrange — silence() must pass redactKeys through to configure().
+    test('should not throw when silence() is called with redactKeys', () {
+      // silence() passes redactKeys through to configure(), but installs a no-op
+      // logger — capturedExtras is never populated, so only no-throw can be asserted
+      // here. Redaction behaviour is covered by the configure() tests above.
       JsonSentinel.resetLoggerForTesting();
       JsonSentinel.silence(redactKeys: {'apiKey'});
 
-      // Act — use the developer.log fallback path to verify redaction still applies.
-      // We verify by accessing _jsonPreview indirectly: validate() calls _jsonPreview
-      // and passes the result to _log. With silence() the logger is a no-op, so we
-      // can only confirm no throw and that the result is still correct.
       expect(
         () => JsonSentinel.validate(
           json: {'userId': 1, 'apiKey': 'sk-live-abc'},

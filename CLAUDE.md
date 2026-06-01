@@ -41,7 +41,7 @@ Pure Dart package, zero runtime dependencies. Four source files under `lib/src/`
 - **`JsonValidationResult.failure()` asserts non-empty errors in debug mode.** A failure result with an empty errors list is semantically contradictory and is caught by an `assert` at construction time. Tests always run with asserts active, so any test that passes `failure([])` will throw an `AssertionError`.
 - **`_validateCore()` is the shared private validation loop.** Both `validate()` and `validateBatch()` delegate to it. It returns `List<String>` errors with no logging side-effects; each caller handles logging itself. Adding a new validation rule requires a change here only.
 - **`escalate` defaults to `false`.** Opt-in to elevated capture (e.g. Sentry event vs breadcrumb) per call-site by passing `escalate: true`.
-- **`_isTypeOf` uses explicit dispatch.** Supported types: `null`, `bool`, `int`, `double`, `num`, `String`, `Map`, `List`. Any other `Type` triggers an `assert` in debug mode and falls back to `runtimeType` equality in release. Adding a new supported type requires a new branch here.
+- **`_isTypeOf` uses explicit dispatch.** Supported types: `null`, `bool`, `int`, `double`, `num`, `String`, `Map<dynamic, dynamic>`, `List<dynamic>`. The type comparisons use fully parameterised forms (`type == Map<dynamic, dynamic>`) to satisfy `always_specify_types`. Any other `Type` triggers an `assert` in debug mode and falls back to `runtimeType` equality in release. Adding a new supported type requires a new branch here.
 - **`extras` keys differ between `validate()` and `validateBatch()`.** `validate()` always provides `'context'` and `'json_preview'`. `validateBatch()` always provides `'context'`, `'failure_count'` (int), and `'total_count'` (int). It also provides `'item_previews'` (`List<String>` of truncated JSON per failing item in `failureIndices` order) **unless** `generatePreviews: false` is passed — in which case `item_previews` is absent entirely. Neither method includes the other's unique keys. Logger implementations must handle both shapes; never assume either key is always present.
 - **`StackTrace.current` is captured as the very first statement in both `validate()` and `validateBatch()`.** This ensures the top frame always points to the call boundary, not library internals, for accurate Sentry/Crashlytics culprit attribution. The minor cost on the all-pass path is accepted.
 - **The `error` parameter in `JsonLogFn` is reserved API surface** — both `validate()` and `validateBatch()` always pass `null` for it.
@@ -52,6 +52,11 @@ Pure Dart package, zero runtime dependencies. Four source files under `lib/src/`
 - **Package imports only** — `always_use_package_imports` is enforced; use `package:json_sentinel/...` not relative paths
 - Trailing commas required on multi-line parameter lists (`require_trailing_commas`)
 - **`// region Name` / `// endregion`** blocks are the project-wide structural convention — used in all `test/src/` files and in `example/json_sentinel_example.dart`
+
+### Lint structure — two-tier analysis options
+
+- **`analysis_options.yaml`** (root) — applies to the whole repo. Includes `lints/recommended`, plus correctness (`avoid_bool_literals_in_conditional_expressions`, `noop_primitive_operations`, `unawaited_futures`, etc.), immutability (`prefer_final_fields`, `prefer_final_locals`), and style rules.
+- **`lib/analysis_options.yaml`** — inherits root, then adds `always_specify_types` and `public_member_api_docs`. These stricter rules apply **only to `lib/`**; `test/` and `example/` are intentionally exempt. All `lib/src/` code must carry explicit type annotations on every declaration and `///` on every public member.
 
 ## CI
 
