@@ -217,7 +217,7 @@ void main() {
   // Without parentContext, it is impossible to know which index in the parent list
   // produced the failure. With it, the log entry is self-contained.
   //
-  // extras['context'] reflects the same chained string, so Sentry/Crashlytics
+  // extras['context'] reflects the same chained string, so your error reporter's
   // fingerprinting and breadcrumb labels are accurate automatically.
 
   final metaItems = <Map<String, dynamic>>[
@@ -242,7 +242,7 @@ void main() {
   // → [WARN] [UserPage.data[2] > MetaModel] JSON validation failed (1 error):
   // →   • Key 'total' has invalid type. Expected: int; Actual: String.
 
-  // extras['context'] carries the full chained path — useful for Sentry grouping:
+  // extras['context'] carries the full chained path — useful for error reporter grouping:
   //   extras['context'] == 'UserPage.data[1] > MetaModel'
 
   // endregion
@@ -251,7 +251,7 @@ void main() {
   //
   // validateBatch() validates a list of payloads against a shared schema and
   // emits exactly ONE consolidated log entry covering all failures. This prevents
-  // one Sentry event per bad record when processing a list endpoint.
+  // one error reporter event per bad record when processing a list endpoint.
   //
   // The returned BatchValidationResult carries:
   //   isValid        — true only when every item passed
@@ -399,7 +399,7 @@ void main() {
   //
   // The canonical combined pattern: validate() checks the outer envelope once,
   // then validateBatch() validates every item inside data[], producing exactly
-  // one log entry for all item failures — not one Sentry capture per bad record.
+  // one log entry for all item failures — not one event per bad record.
   //
   // Envelope failure (wrong type for current_page) → escalate: true → full capture.
   // Item failures (bad records inside data) → escalate: false → single breadcrumb.
@@ -456,7 +456,7 @@ void main() {
   // region redactKeys: mask sensitive values in json_preview -----------------
   //
   // Pass redactKeys to configure() to mask named top-level fields before any
-  // json_preview or item_previews snapshot is sent to Sentry/Crashlytics.
+  // json_preview or item_previews snapshot is sent to your error reporter.
   // The redaction placeholder defaults to '[REDACTED]' and can be overridden.
   // The validated data itself is never modified — only the preview string is affected.
   //

@@ -9,7 +9,7 @@ import 'package:json_sentinel/src/json_validation_result.dart';
 ///
 /// Validates a [Map<String, dynamic>] against an expected schema — checking
 /// key existence and value types — without code generation. Designed for use
-/// in [tryFromJson] methods to catch malformed API responses early.
+/// in `tryFromJson` methods to catch malformed API responses early.
 ///
 /// All methods are static; this class cannot be instantiated.
 ///
@@ -162,7 +162,7 @@ class JsonSentinel {
   /// `dart:developer` trace is emitted on each passing call.
   ///
   /// Example log output:
-  /// ```
+  /// ```text
   /// [ProductListing] JSON validation failed (2 errors):
   ///   • Key 'productId' has invalid type. Expected: int; Actual: String.
   ///   • Missing required key 'sku'.
@@ -240,7 +240,7 @@ class JsonSentinel {
   ///   `failureIndices` order (`List<String>`). Absent when [generatePreviews] is `false`.
   ///
   /// Example log output when 2 of 5 items fail:
-  /// ```
+  /// ```text
   /// [UserRecord] JSON batch validation failed (2 of 5 items failed):
   ///   Item 1 (1 error):
   ///     • Missing required key 'name'.

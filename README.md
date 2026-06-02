@@ -2,8 +2,10 @@
 
 [![CI](https://github.com/IgeeTheron/json-sentinel/actions/workflows/ci.yml/badge.svg)](https://github.com/IgeeTheron/json-sentinel/actions/workflows/ci.yml)
 [![pub.dev](https://img.shields.io/pub/v/json_sentinel.svg)](https://pub.dev/packages/json_sentinel)
+[![codecov](https://codecov.io/gh/IgeeTheron/json-sentinel/graph/badge.svg)](https://codecov.io/gh/IgeeTheron/json-sentinel)
+[![API docs](https://img.shields.io/badge/docs-api-blue)](https://igeetheron.github.io/json-sentinel/)
 
-Lightweight runtime JSON key and type validation for Dart — no code generation required.
+Lightweight runtime JSON validation for Dart — configurable logger, redaction, and batch validation — routes failures to any error reporter. No code generation required.
 
 Validates a `Map<String, dynamic>` against an expected schema before you deserialise it,
 catching malformed API responses early with a single, readable log entry per failure.
@@ -14,10 +16,10 @@ catching malformed API responses early with a single, readable log entry per fai
 - Nullable fields, union types (`[int, double]`), and optional fields all supported
 - Strict mode flags unexpected keys not declared in your schema
 - Single log entry per call listing every problem as a bullet — nothing hidden by an early return
-- **`validateBatch()`** — validates a list of payloads against a shared schema and emits one consolidated log entry for all failures, preventing duplicate Sentry/Crashlytics events when processing list endpoints
+- **`validateBatch()`** — validates a list of payloads against a shared schema and emits one consolidated log entry for all failures, preventing duplicate error reporter events when processing list endpoints
 - `json_preview` attached to single-item extras; `item_previews` (`List<String>`) attached to batch extras — one JSON preview per failing item (opt out with `generatePreviews: false`)
 - `parentContext` — chain `validate()` calls across nested models to produce `[UserPage.data[2] > MetaModel]` log prefixes, pinpointing failures in paginated or deeply-nested responses without extra logging code
-- `redactKeys` — mask sensitive top-level field values (passwords, tokens, API keys) in `json_preview` and `item_previews` before they reach Sentry/Crashlytics; custom `redactionPlaceholder` supported
+- `redactKeys` — mask sensitive top-level field values (passwords, tokens, API keys) in `json_preview` and `item_previews` before they reach your error reporter; custom `redactionPlaceholder` supported
 - Configurable `escalate` flag per call — control whether a failure is a breadcrumb or a full capture
 - Returns `JsonValidationResult` with `isValid` + programmatic `errors` list; `validateBatch()` returns `BatchValidationResult` with per-item `results`, `failureCount`, and `failureIndices`
 - `silence()` for pure programmatic use with no log output
@@ -115,7 +117,7 @@ static ProductListing? tryFromJson(Map<String, dynamic> json) {
 
 `validateBatch()` validates a list of payloads against a shared schema and emits exactly
 **one** consolidated log entry — no matter how many items fail. Use it instead of calling
-`validate()` in a loop when failures should produce a single Sentry event.
+`validate()` in a loop when failures should produce a single error reporter event.
 
 ```dart
 final batch = JsonSentinel.validateBatch(
@@ -159,7 +161,7 @@ if (batch.failureCount == payloads.length) {
 }
 ```
 
-#### Batch extras for Sentry
+#### Batch extras for your error reporter
 
 On failure the logger receives `extras` with `'context'`, `'failure_count'` (int),
 `'total_count'` (int), and `'item_previews'` — a `List<String>` of truncated JSON
@@ -178,7 +180,7 @@ Sentry.captureMessage(message, hint: Hint.withMap({
 When a list endpoint wraps items in an envelope object, use `validate()` for the outer
 shape and `validateBatch()` for the items inside. This produces at most two log entries —
 one if the envelope itself is malformed (worth escalating), one covering all item failures
-combined (a single breadcrumb, not one Sentry capture per bad record).
+combined (a single breadcrumb, not one event per bad record).
 
 ```dart
 static PaginatedUserResponse? tryFromJson(Map<String, dynamic> json) {
@@ -292,7 +294,7 @@ for (var i = 0; i < items.length; i++) {
 //   • Missing required key 'total'.
 ```
 
-The combined path is also stored in `extras['context']`, so Sentry breadcrumbs and
+The combined path is also stored in `extras['context']`, so error reporter breadcrumbs and
 fingerprints are accurate without any extra work.
 
 `validateBatch()` does not accept `parentContext` — it builds its own indexed path
@@ -424,6 +426,7 @@ Add the key to `optional` to make presence itself optional.
 ## Additional information
 
 - [pub.dev package page](https://pub.dev/packages/json_sentinel)
+- [API documentation](https://igeetheron.github.io/json-sentinel/)
 - [File issues](https://github.com/IgeeTheron/json-sentinel/issues)
 - [Changelog](https://github.com/IgeeTheron/json-sentinel/blob/main/CHANGELOG.md)
 - Contributions welcome — open an issue before starting significant work

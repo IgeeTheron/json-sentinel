@@ -46,5 +46,23 @@ jobs:
       - name: Analyze
         run: dart analyze --fatal-infos --fatal-warnings
 
+      - name: Verify documentation builds
+        run: dart doc --dry-run
+
       - name: Test
-        run: dart test --reporter=github
+        run: dart test --coverage=coverage --reporter=github
+
+      - name: Activate coverage
+        run: dart pub global activate coverage
+
+      - name: Format coverage to lcov
+        run: dart pub global run coverage:format_coverage --lcov --in=coverage --out=coverage/lcov.info --report-on=lib
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage/lcov.info
+
+      - name: Verify publishable (dry run)
+        run: dart pub publish --dry-run
