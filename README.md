@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/IgeeTheron/json-sentinel/actions/workflows/ci.yml/badge.svg)](https://github.com/IgeeTheron/json-sentinel/actions/workflows/ci.yml)
 [![pub.dev](https://img.shields.io/pub/v/json_sentinel.svg)](https://pub.dev/packages/json_sentinel)
+[![codecov](https://codecov.io/gh/IgeeTheron/json-sentinel/graph/badge.svg)](https://codecov.io/gh/IgeeTheron/json-sentinel)
 
 Lightweight runtime JSON key and type validation for Dart — no code generation required.
 

@@ -9,7 +9,7 @@ import 'package:json_sentinel/src/json_validation_result.dart';
 ///
 /// Validates a [Map<String, dynamic>] against an expected schema — checking
 /// key existence and value types — without code generation. Designed for use
-/// in [tryFromJson] methods to catch malformed API responses early.
+/// in `tryFromJson` methods to catch malformed API responses early.
 ///
 /// All methods are static; this class cannot be instantiated.
 ///
