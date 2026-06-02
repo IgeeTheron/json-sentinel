@@ -426,6 +426,7 @@ Add the key to `optional` to make presence itself optional.
 ## Additional information
 
 - [pub.dev package page](https://pub.dev/packages/json_sentinel)
+- [API documentation](https://igeetheron.github.io/json-sentinel/)
 - [File issues](https://github.com/IgeeTheron/json-sentinel/issues)
 - [Changelog](https://github.com/IgeeTheron/json-sentinel/blob/main/CHANGELOG.md)
 - Contributions welcome — open an issue before starting significant work

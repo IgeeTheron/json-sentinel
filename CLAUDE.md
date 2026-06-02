@@ -18,6 +18,8 @@ bash scripts/publish.sh --dry-run                    # pub.dev pre-flight (safe 
 bash scripts/publish.sh --force                      # publish locally (CI uses OIDC — see publish.yml)
 bash scripts/test_scripts.sh                         # run shell script test suite
 dart run example/json_sentinel_example.dart           # run the example
+dart doc --dry-run                                    # verify all /// comments parse with 0 warnings/errors
+dart doc --output doc/api                             # generate API docs locally (output gitignored)
 ```
 
 ## Architecture
@@ -61,10 +63,11 @@ Pure Dart package, zero runtime dependencies. Four source files under `lib/src/`
 
 ## CI
 
-Two GitHub Actions workflows in `.github/workflows/`:
+Three GitHub Actions workflows in `.github/workflows/`:
 
-- **`ci.yml`** — runs on every PR and push to `main`: format check, analyze, script tests, dart tests. Failing tests appear as inline annotations in the PR diff (`--reporter=github`).
-- **`publish.yml`** — triggered by a `v[0-9]+.[0-9]+.[0-9]+` tag: runs the full check suite in a `ci` job, then publishes via the official `dart-lang/setup-dart/.github/workflows/publish.yml@v1` reusable workflow using OIDC (no long-lived secret). Requires one-time setup on `pub.dev/packages/json_sentinel/admin` — enable automated publishing, set repo to `IgeeTheron/json-sentinel`, tag pattern `v{{version}}`.
+- **`ci.yml`** — runs on every PR and push to `main`. Steps in order: format check → analyze → `dart doc --dry-run` → tests with coverage collection → Codecov upload → `dart pub publish --dry-run`. Failing tests appear as inline annotations in the PR diff (`--reporter=github`). `dart pub publish --dry-run` exits 65 on any warning — zero warnings is enforced.
+- **`publish.yml`** — triggered by a `v[0-9]+.[0-9]+.[0-9]+` tag: runs a lighter CI job (format + analyze + test, no coverage or doc steps), then publishes via the official `dart-lang/setup-dart/.github/workflows/publish.yml@v1` reusable workflow using OIDC (no long-lived secret). Requires one-time setup on `pub.dev/packages/json_sentinel/admin` — enable automated publishing, set repo to `IgeeTheron/json-sentinel`, tag pattern `v{{version}}`.
+- **`docs.yml`** — runs on push to `main` and `workflow_dispatch`. Generates the API reference via `dart doc --output doc/api` and deploys to GitHub Pages at `https://igeetheron.github.io/json-sentinel/`. Never cancels in-progress deployments (`cancel-in-progress: false`). The `doc/` output directory is gitignored.
 
 ## Changelog
 
