@@ -429,4 +429,6 @@ Add the key to `optional` to make presence itself optional.
 - [API documentation](https://igeetheron.github.io/json-sentinel/)
 - [File issues](https://github.com/IgeeTheron/json-sentinel/issues)
 - [Changelog](https://github.com/IgeeTheron/json-sentinel/blob/main/CHANGELOG.md)
-- Contributions welcome — open an issue before starting significant work
+- [Contributing](CONTRIBUTING.md) — open an issue before starting significant work
+- [Security policy](SECURITY.md)
+- [Code of Conduct](CODE_OF_CONDUCT.md)
