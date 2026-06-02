@@ -1,0 +1,49 @@
+name: Bug Report
+description: Report a bug in json_sentinel
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: json_sentinel version
+      placeholder: "0.3.0"
+    validations:
+      required: true
+
+  - type: input
+    id: sdk
+    attributes:
+      label: Dart / Flutter SDK version
+      placeholder: "Dart 3.x / Flutter 3.x"
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: A minimal code snippet that reproduces the issue.
+      render: dart
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+    validations:
+      required: true
+
+  - type: textarea
+    id: stacktrace
+    attributes:
+      label: Stack trace (if applicable)
+      render: text

@@ -1,0 +1,38 @@
+name: Feature Request
+description: Propose a new feature or API change for json_sentinel
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What are you trying to do that you currently can't?
+    validations:
+      required: true
+
+  - type: textarea
+    id: api
+    attributes:
+      label: Proposed API sketch
+      description: Show what calling the new API would look like.
+      render: dart
+    validations:
+      required: true
+
+  - type: dropdown
+    id: competing
+    attributes:
+      label: Does this already exist in a competing package?
+      description: "Competing packages: json_guard, ez_validator, lucid_validation, validart, json_schema_builder"
+      options:
+        - "No"
+        - "Yes — see additional context below"
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: If you selected 'Yes' above — which package has it, and why does it still belong in json_sentinel?
