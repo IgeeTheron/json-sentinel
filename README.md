@@ -16,6 +16,7 @@ catching malformed API responses early with a single, readable log entry per fai
 - Single log entry per call listing every problem as a bullet — nothing hidden by an early return
 - **`validateBatch()`** — validates a list of payloads against a shared schema and emits one consolidated log entry for all failures, preventing duplicate Sentry/Crashlytics events when processing list endpoints
 - `json_preview` attached to single-item extras; `item_previews` (`List<String>`) attached to batch extras — one JSON preview per failing item (opt out with `generatePreviews: false`)
+- `parentContext` — chain `validate()` calls across nested models to produce `[UserPage.data[2] > MetaModel]` log prefixes, pinpointing failures in paginated or deeply-nested responses without extra logging code
 - `redactKeys` — mask sensitive top-level field values (passwords, tokens, API keys) in `json_preview` and `item_previews` before they reach Sentry/Crashlytics; custom `redactionPlaceholder` supported
 - Configurable `escalate` flag per call — control whether a failure is a breadcrumb or a full capture
 - Returns `JsonValidationResult` with `isValid` + programmatic `errors` list; `validateBatch()` returns `BatchValidationResult` with per-item `results`, `failureCount`, and `failureIndices`
@@ -272,6 +273,31 @@ static MetaModel? tryFromJson(Map<String, dynamic> json) {
 }
 ```
 
+### parentContext — chained paths across nested models
+
+When calling `validate()` in a loop over nested items, pass `parentContext` to include
+the parent path in every log entry. Without it, errors from index 1, 2, and 19 all read
+`[MetaModel]` — with it, the log pinpoints each one:
+
+```dart
+for (var i = 0; i < items.length; i++) {
+  JsonSentinel.validate(
+    json: items[i]['meta'] as Map<String, dynamic>,
+    expectedTypes: {'total': [int], 'per_page': [int]},
+    context: 'MetaModel',
+    parentContext: 'UserPage.data[$i]',
+  );
+}
+// [UserPage.data[1] > MetaModel] JSON validation failed (1 error):
+//   • Missing required key 'total'.
+```
+
+The combined path is also stored in `extras['context']`, so Sentry breadcrumbs and
+fingerprints are accurate without any extra work.
+
+`validateBatch()` does not accept `parentContext` — it builds its own indexed path
+(`Item 1`, `Item 2`, …) internally.
+
 ### Optional fields
 
 Keys listed in `optional` are skipped when absent but still type-checked when present:
@@ -344,6 +370,13 @@ Single-item failure:
 [ProductListing] JSON validation failed (2 errors):
   • Key 'productId' has invalid type. Expected: int; Actual: String.
   • Missing required key 'sku'.
+```
+
+Single-item failure with `parentContext`:
+
+```
+[UserPage.data[2] > MetaModel] JSON validation failed (1 error):
+  • Missing required key 'total'.
 ```
 
 Batch failure:

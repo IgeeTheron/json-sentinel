@@ -681,6 +681,102 @@ void main() {
 
     // endregion
 
+    // region parentContext — chained path in log message and extras.
+
+    test('should use chained path in log message when parentContext is provided', () {
+      // Act
+      JsonSentinel.validate(
+        json: {},
+        expectedTypes: {
+          'total': [int],
+        },
+        context: 'MetaModel',
+        parentContext: 'UserPage.data[2]',
+      );
+
+      // Assert
+      expect(logs.first, contains('[UserPage.data[2] > MetaModel]'));
+    });
+
+    test('should set extras context to full chained path when parentContext is provided', () {
+      // Act
+      JsonSentinel.validate(
+        json: {},
+        expectedTypes: {
+          'total': [int],
+        },
+        context: 'MetaModel',
+        parentContext: 'UserPage.data[2]',
+      );
+
+      // Assert
+      expect(capturedExtras.first!['context'], 'UserPage.data[2] > MetaModel');
+    });
+
+    test('should use plain context in log message when parentContext is omitted', () {
+      // Act
+      JsonSentinel.validate(
+        json: {},
+        expectedTypes: {
+          'total': [int],
+        },
+        context: 'MetaModel',
+      );
+
+      // Assert
+      expect(logs.first, contains('[MetaModel]'));
+      expect(logs.first, isNot(contains('>')));
+    });
+
+    test('should set extras context to plain context when parentContext is omitted', () {
+      // Act
+      JsonSentinel.validate(
+        json: {},
+        expectedTypes: {
+          'total': [int],
+        },
+        context: 'MetaModel',
+      );
+
+      // Assert
+      expect(capturedExtras.first!['context'], 'MetaModel');
+    });
+
+    test('should still include json_preview in extras when parentContext is provided', () {
+      // Arrange — json_preview must survive unchanged; only the context key changes.
+      final json = <String, dynamic>{'id': 42};
+
+      // Act
+      JsonSentinel.validate(
+        json: json,
+        expectedTypes: {
+          'total': [int],
+        },
+        context: 'MetaModel',
+        parentContext: 'UserPage',
+      );
+
+      // Assert
+      expect(capturedExtras.first!.containsKey('json_preview'), isTrue);
+    });
+
+    test('should not invoke the logger on success when parentContext is provided', () {
+      // Act
+      JsonSentinel.validate(
+        json: {'total': 10},
+        expectedTypes: {
+          'total': [int],
+        },
+        context: 'MetaModel',
+        parentContext: 'UserPage',
+      );
+
+      // Assert
+      expect(logs, isEmpty);
+    });
+
+    // endregion
+
     // region Logger fallback — when logger is null, print is used (no crash).
 
     test('should not throw when logger is null and validation fails', () {

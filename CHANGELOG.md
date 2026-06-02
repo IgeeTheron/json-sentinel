@@ -8,7 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `parentContext` parameter (`String?`) on `validate()`: when provided, log output and `extras['context']` use the full chained path `'$parentContext > $context'`, making it possible to locate failing nested models by call site (e.g. `[UserPage.data[2] > MetaModel]`).
 - `redactKeys` (`Set<String>?`) and `redactionPlaceholder` (`String`, default `'[REDACTED]'`) parameters on `configure()` and `silence()`. Top-level JSON field values whose keys appear in `redactKeys` are replaced with the placeholder before any `json_preview` or `item_previews` snapshot is encoded and forwarded to Sentry/Crashlytics — the validated data itself is never modified.
+
+### Changed
+- Added `logging` and `observability` topics to `pubspec.yaml` for better pub.dev discoverability.
 
 ## [0.2.0] - 2026-05-29
 
