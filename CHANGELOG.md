@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-02
+
 ### Added
 - `parentContext` parameter (`String?`) on `validate()`: when provided, log output and `extras['context']` use the full chained path `'$parentContext > $context'`, making it possible to locate failing nested models by call site (e.g. `[UserPage.data[2] > MetaModel]`).
 - `redactKeys` (`Set<String>?`) and `redactionPlaceholder` (`String`, default `'[REDACTED]'`) parameters on `configure()` and `silence()`. Top-level JSON field values whose keys appear in `redactKeys` are replaced with the placeholder before any `json_preview` or `item_previews` snapshot is encoded and forwarded to Sentry/Crashlytics — the validated data itself is never modified.
@@ -49,6 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fallback logging via `dart:developer` when no logger is configured; suppressed in release builds — always call `configure()` or `silence()` in production code.
 - Zero runtime dependencies — pure Dart, works in Flutter, server, and CLI projects.
 
+[Unreleased]: https://github.com/IgeeTheron/json-sentinel/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/IgeeTheron/json-sentinel/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/IgeeTheron/json-sentinel/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/IgeeTheron/json-sentinel/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/IgeeTheron/json-sentinel/releases/tag/v0.1.0
