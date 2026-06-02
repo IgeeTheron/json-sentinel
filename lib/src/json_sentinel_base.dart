@@ -152,6 +152,12 @@ class JsonSentinel {
   ///
   /// [context] identifies the model in log output. Defaults to `'UnknownModel'`.
   ///
+  /// [parentContext] is an optional parent path prepended to [context] in log
+  /// output and in the logger's `extras` map. When provided, the effective context
+  /// becomes `'$parentContext > $context'` — useful when chaining [validate] calls
+  /// across nested models to show the full path to the failing item
+  /// (e.g. `UserPage.data[2] > MetaModel`).
+  ///
   /// When verbose logging is enabled via [configure] or [silence], a
   /// `dart:developer` trace is emitted on each passing call.
   ///
@@ -168,8 +174,10 @@ class JsonSentinel {
     bool strict = false,
     bool escalate = false,
     String context = 'UnknownModel',
+    String? parentContext,
   }) {
     final StackTrace stackTrace = StackTrace.current;
+    final String effectiveContext = parentContext != null ? '$parentContext > $context' : context;
     final List<String> errors = _validateCore(
       json: json,
       expectedTypes: expectedTypes,
@@ -181,14 +189,14 @@ class JsonSentinel {
       final String count = '${errors.length} error${errors.length == 1 ? '' : 's'}';
       final String bullets = errors.map((String e) => '  • $e').join('\n');
       _log(
-        '[$context] JSON validation failed ($count):\n$bullets',
+        '[$effectiveContext] JSON validation failed ($count):\n$bullets',
         stackTrace: stackTrace,
-        extras: <String, Object?>{'context': context, 'json_preview': _jsonPreview(json)},
+        extras: <String, Object?>{'context': effectiveContext, 'json_preview': _jsonPreview(json)},
         escalate: escalate,
       );
       if (_verbose) {
         developer.log(
-          '[$context] validate() failed — ${errors.length} error(s).',
+          '[$effectiveContext] validate() failed — ${errors.length} error(s).',
           name: 'JsonSentinel',
         );
       }
@@ -197,7 +205,7 @@ class JsonSentinel {
 
     if (_verbose) {
       developer.log(
-        '[$context] validate() passed — ${expectedTypes.length} key(s) checked.',
+        '[$effectiveContext] validate() passed — ${expectedTypes.length} key(s) checked.',
         name: 'JsonSentinel',
       );
     }

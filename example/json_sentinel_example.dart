@@ -51,6 +51,8 @@ void main() {
   //   json          — the Map<String, dynamic> to validate
   //   expectedTypes — schema: key → allowed types (include null to allow null)
   //   context       — model name shown in log output; defaults to 'UnknownModel'
+  //   parentContext — optional parent path; produces '$parentContext > $context'
+  //                   in log output and extras['context'] (see parentContext region)
   //   optional      — keys skipped when absent, type-checked when present
   //   strict        — flag keys in json not declared in expectedTypes (see region 6)
   //   escalate      — hint to logger for elevated capture; defaults to false
@@ -203,6 +205,45 @@ void main() {
     print('Page ${page.meta.currentPage} of ${page.meta.lastPage} — ${page.meta.total} total');
     // → Page 1 of 1 — 0 total
   }
+
+  // endregion
+
+  // region parentContext: chained paths across nested validate() calls --------
+  //
+  // When validate() is called inside a loop over nested models, passing
+  // parentContext makes the log prefix include the full path to the failing item —
+  // e.g. [UserPage.data[2] > MetaModel] instead of just [MetaModel].
+  //
+  // Without parentContext, it is impossible to know which index in the parent list
+  // produced the failure. With it, the log entry is self-contained.
+  //
+  // extras['context'] reflects the same chained string, so Sentry/Crashlytics
+  // fingerprinting and breadcrumb labels are accurate automatically.
+
+  final metaItems = <Map<String, dynamic>>[
+    {'total': 0, 'per_page': 15}, // valid
+    {'per_page': 15}, // missing 'total' — will log [UserPage.data[1] > MetaModel]
+    {'total': 'bad', 'per_page': 15}, // wrong type — will log [UserPage.data[2] > MetaModel]
+  ];
+
+  for (var index = 0; index < metaItems.length; index++) {
+    JsonSentinel.validate(
+      json: metaItems[index],
+      expectedTypes: {
+        'total': [int],
+        'per_page': [int],
+      },
+      context: 'MetaModel',
+      parentContext: 'UserPage.data[$index]',
+    );
+  }
+  // → [WARN] [UserPage.data[1] > MetaModel] JSON validation failed (1 error):
+  // →   • Missing required key 'total'.
+  // → [WARN] [UserPage.data[2] > MetaModel] JSON validation failed (1 error):
+  // →   • Key 'total' has invalid type. Expected: int; Actual: String.
+
+  // extras['context'] carries the full chained path — useful for Sentry grouping:
+  //   extras['context'] == 'UserPage.data[1] > MetaModel'
 
   // endregion
 
