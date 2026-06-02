@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `CONTRIBUTING.md` — contribution guide covering prerequisites, local CI commands, code standards, and CHANGELOG update instructions.
+- `SECURITY.md` — security policy with supported versions and private vulnerability reporting process.
+- `CODE_OF_CONDUCT.md` — Contributor Covenant v2.1.
+- GitHub issue templates (`bug_report.yml`, `feature_request.yml`) using YAML issue forms.
+- `.github/pull_request_template.md` — PR checklist aligned with CI requirements.
+- API documentation deployed to GitHub Pages at `https://igeetheron.github.io/json-sentinel/` on every push to `main`.
+- Codecov coverage reporting with badge; coverage collected on every CI run.
+
+### Changed
+
+- `pubspec.yaml`: added `documentation:` URL and updated description to vendor-agnostic language.
+- README: added Codecov and API docs badges; linked Contributing, Security, and Code of Conduct in Additional information.
+
 ## [0.3.0] - 2026-06-02
 
 ### Added
