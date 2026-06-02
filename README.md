@@ -366,7 +366,7 @@ if (!result.isValid) {
 
 Single-item failure:
 
-```
+```text
 [ProductListing] JSON validation failed (2 errors):
   • Key 'productId' has invalid type. Expected: int; Actual: String.
   • Missing required key 'sku'.
@@ -374,14 +374,14 @@ Single-item failure:
 
 Single-item failure with `parentContext`:
 
-```
+```text
 [UserPage.data[2] > MetaModel] JSON validation failed (1 error):
   • Missing required key 'total'.
 ```
 
 Batch failure:
 
-```
+```text
 [UserRecord] JSON batch validation failed (2 of 4 items failed):
   Item 1 (1 error):
     • Missing required key 'role'.
