@@ -29,9 +29,7 @@ void main() {
       });
     });
 
-    tearDown(() {
-      JsonSentinel.resetLoggerForTesting();
-    });
+    tearDown(JsonSentinel.resetLoggerForTesting);
 
     // region Happy paths — isValid true, no log emitted.
 

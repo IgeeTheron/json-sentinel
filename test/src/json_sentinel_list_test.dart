@@ -83,21 +83,6 @@ void main() {
       expect(result.results.length, 3);
     });
 
-    test('should use UnknownModel as default context when none is provided', () {
-      // Act
-      JsonSentinel.validateList(
-        raw: [
-          {'id': 'wrong'},
-        ],
-        expectedTypes: {
-          'id': [int],
-        },
-      );
-
-      // Assert
-      expect(logs.first, contains('UnknownModel'));
-    });
-
     // endregion
 
     // region Non-Map items — failure with descriptive error.
@@ -205,13 +190,16 @@ void main() {
     });
 
     test('should support tryFromListJson pattern using failureIndices to skip bad items', () {
+      // Arrange
+      final List<dynamic> raw = [
+        {'id': 1},
+        'not-a-map',
+        {'id': 3},
+      ];
+
       // Act
       final result = JsonSentinel.validateList(
-        raw: [
-          {'id': 1},
-          'not-a-map',
-          {'id': 3},
-        ],
+        raw: raw,
         expectedTypes: {
           'id': [int],
         },
@@ -219,11 +207,6 @@ void main() {
       );
 
       // Simulate fromValidListJson: build only from non-failing, Map items
-      final List<dynamic> raw = [
-        {'id': 1},
-        'not-a-map',
-        {'id': 3},
-      ];
       final List<Map<String, dynamic>> valid = [
         for (int i = 0; i < raw.length; i++)
           if (!result.failureIndices.contains(i) && raw[i] is Map<String, dynamic>) raw[i] as Map<String, dynamic>,
@@ -238,6 +221,21 @@ void main() {
     // endregion
 
     // region Error log format — mirrors validateBatch.
+
+    test('should use UnknownModel as default context when none is provided', () {
+      // Act
+      JsonSentinel.validateList(
+        raw: [
+          {'id': 'wrong'},
+        ],
+        expectedTypes: {
+          'id': [int],
+        },
+      );
+
+      // Assert
+      expect(logs.first, contains('UnknownModel'));
+    });
 
     test('should emit exactly one log entry on failure', () {
       // Act

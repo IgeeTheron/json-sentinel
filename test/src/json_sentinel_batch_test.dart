@@ -943,8 +943,8 @@ void main() {
         context: 'UserRecord',
       );
 
-      // Assert
-      expect(logs.first, contains('1 unexpected key'));
+      // Assert — "(1 unexpected key)" includes the closing paren, ruling out the plural form
+      expect(logs.first, contains('(1 unexpected key)'));
       expect(logs.first, isNot(contains('1 unexpected keys')));
     });
   });
