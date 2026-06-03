@@ -1,6 +1,6 @@
 name: json_sentinel
 description: Lightweight runtime JSON validation for Dart. Configurable logger, redaction, and batch validation — routes failures to any error reporter. No code generation.
-version: 0.3.0
+version: 0.4.0
 repository: https://github.com/IgeeTheron/json-sentinel
 issue_tracker: https://github.com/IgeeTheron/json-sentinel/issues
 documentation: https://igeetheron.github.io/json-sentinel/
