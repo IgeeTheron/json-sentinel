@@ -247,6 +247,137 @@ void main() {
 
   // endregion
 
+  // region warnUnexpected: log API drift without failing ----------------------
+  //
+  // APIs often add new fields in minor versions. strict: true would fail the whole
+  // validation on any unknown key. warnUnexpected: true logs the unknown keys as
+  // warnings but keeps result.isValid = true — the app continues working while you
+  // are notified of the contract drift.
+  //
+  // warnUnexpected and strict are mutually exclusive (assert in debug mode).
+
+  // Simulate a v1 schema receiving a v2 response with new fields:
+  final v2Response = <String, dynamic>{
+    'id': 42,
+    'status': 'active',
+    'created_at': '2026-06-03', // new in v2 — unknown to v1 schema
+    'metadata': {'source': 'web'}, // also new in v2
+  };
+
+  final warnResult = JsonSentinel.validate(
+    json: v2Response,
+    expectedTypes: {
+      'id': [int],
+      'status': [String],
+    },
+    warnUnexpected: true,
+    context: 'UserRecord',
+  );
+  print('warnUnexpected isValid: ${warnResult.isValid}');
+  // → [WARN] [UserRecord] JSON validation warning (2 unexpected keys):
+  // →   • Unexpected key 'created_at'.
+  // →   • Unexpected key 'metadata'.
+  // → warnUnexpected isValid: true
+
+  // endregion
+
+  // region validators: per-field value checks after type validation ------------
+  //
+  // validators accepts a Map<String, bool Function(Object?)> of predicate lambdas
+  // that run after type validation passes for that key. A predicate returning
+  // false adds a bullet error identifying the key. Predicates are skipped for
+  // absent optional keys and for keys that already failed type validation.
+  //
+  // Use this for lightweight domain constraints — allowed enum values, numeric
+  // ranges, non-empty strings — without turning json_sentinel into a full
+  // constraint library.
+
+  final orderJson = <String, dynamic>{
+    'status': 'unknown', // invalid — not in the allowed set
+    'quantity': -5, // invalid — must be > 0
+    'sku': 'WIDGET-XL', // valid
+  };
+
+  final validatorResult = JsonSentinel.validate(
+    json: orderJson,
+    expectedTypes: {
+      'status': [String],
+      'quantity': [int],
+      'sku': [String],
+    },
+    validators: {
+      'status': (Object? v) => const ['active', 'inactive', 'pending'].contains(v),
+      'quantity': (Object? v) => (v as int) > 0,
+    },
+    context: 'OrderRecord',
+  );
+  print('validators isValid: ${validatorResult.isValid}');
+  // → [WARN] [OrderRecord] JSON validation failed (2 errors):
+  // →   • Key 'status' failed custom validation.
+  // →   • Key 'quantity' failed custom validation.
+  // → validators isValid: false
+
+  // endregion
+
+  // region validateList(): bare JSON arrays from jsonDecode --------------------
+  //
+  // Many API endpoints return a bare JSON array at the top level, not a keyed
+  // envelope. validateList() accepts a List<dynamic> directly from jsonDecode
+  // and handles non-Map items as failures with a descriptive error, rather than
+  // crashing with a cast error.
+  //
+  // The returned BatchValidationResult is the same type as validateBatch(), so
+  // the same isValid and failureIndices patterns apply.
+  //
+  // Two idiomatic patterns — add these as static methods on your model class:
+  //
+  //   tryFromListJson  — returns null when any item fails (strict)
+  //   fromValidListJson — skips invalid items and returns the rest (lenient)
+
+  // Simulating a bare JSON array response — item at index 1 is a non-Map value:
+  final rawUserList = <dynamic>[
+    <String, dynamic>{'id': 1, 'name': 'Alice', 'role': 'admin'},
+    'not-a-map', // non-Map item — counted as failure at index 1
+    <String, dynamic>{'id': 3, 'name': 'Carol', 'role': 'viewer'},
+  ];
+
+  // Pattern 1 — full-or-nothing (tryFromListJson):
+  // Returns null when any item fails; all items must be valid.
+  final strictList = UserRecord.tryFromListJson(rawUserList);
+  print('tryFromListJson (strict): ${strictList == null ? "null — 1 item failed" : "non-null"}');
+  // → [WARN] [UserRecord] JSON list validation failed (1 of 3 items failed):
+  // →   Item 1 (1 error):
+  // →     • Item 1 is not a Map<String, dynamic>.
+  // → tryFromListJson (strict): null — 1 item failed
+
+  // Pattern 2 — skip-bad-items (fromValidListJson):
+  // Returns only the valid items using failureIndices to exclude failures.
+  final lenientList = UserRecord.fromValidListJson(rawUserList);
+  print('fromValidListJson (lenient): ${lenientList.map((UserRecord u) => u.name).toList()}');
+  // → fromValidListJson (lenient): [Alice, Carol]
+
+  // warnUnexpected and validators work identically inside validateList():
+  JsonSentinel.validateList(
+    raw: <dynamic>[
+      <String, dynamic>{'id': 1, 'name': 'Alice', 'role': 'admin', 'new_field': 'v2'},
+    ],
+    expectedTypes: {
+      'id': [int],
+      'name': [String],
+      'role': [String],
+    },
+    warnUnexpected: true,
+    validators: {
+      'role': (Object? v) => const ['admin', 'editor', 'viewer'].contains(v),
+    },
+    context: 'UserRecord',
+  );
+  // → [WARN] [UserRecord] JSON list validation warning (1 of 1 item had unexpected keys):
+  // →   Item 0 (1 unexpected key):
+  // →     • Unexpected key 'new_field'.
+
+  // endregion
+
   // region validateBatch(): batch validation ---------------------------------
   //
   // validateBatch() validates a list of payloads against a shared schema and
@@ -552,13 +683,19 @@ void main() {
 // Models
 // ---------------------------------------------------------------------------
 
-// Used by the validateBatch() and paginated-responses sections.
+// Used by the validateBatch(), validateList(), and paginated-responses sections.
 // fromValidJson() performs no validation — call it only after the relevant
-// validate/validateBatch call confirms the item passed.
+// validate/validateBatch/validateList call confirms the item passed.
 class UserRecord {
   final int id;
   final String name;
   final String role;
+
+  static const Map<String, List<Type?>?> _schema = <String, List<Type?>?>{
+    'id': <Type?>[int],
+    'name': <Type?>[String],
+    'role': <Type?>[String],
+  };
 
   UserRecord({required this.id, required this.name, required this.role});
 
@@ -567,6 +704,35 @@ class UserRecord {
         name: json['name'] as String,
         role: json['role'] as String,
       );
+
+  // Full-or-nothing: returns null when any item in [raw] fails validation.
+  // Use when the caller must abort entirely if the list is partially invalid.
+  static List<UserRecord>? tryFromListJson(List<dynamic> raw) {
+    final BatchValidationResult batch = JsonSentinel.validateList(
+      raw: raw,
+      expectedTypes: _schema,
+      context: 'UserRecord',
+    );
+    if (!batch.isValid) return null;
+    return <UserRecord>[
+      for (final Object? item in raw)
+        if (item is Map<String, dynamic>) UserRecord.fromValidJson(item),
+    ];
+  }
+
+  // Skip-bad-items: returns only the valid items using failureIndices.
+  // Use when the caller can continue with a partial list.
+  static List<UserRecord> fromValidListJson(List<dynamic> raw) {
+    final BatchValidationResult batch = JsonSentinel.validateList(
+      raw: raw,
+      expectedTypes: _schema,
+      context: 'UserRecord',
+    );
+    return <UserRecord>[
+      for (int i = 0; i < raw.length; i++)
+        if (!batch.failureIndices.contains(i) && raw[i] is Map<String, dynamic>) UserRecord.fromValidJson(raw[i] as Map<String, dynamic>),
+    ];
+  }
 }
 
 // Used by the 'Paginated responses' region. Demonstrates validate() +

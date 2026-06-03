@@ -701,6 +701,24 @@ void main() {
         returnsNormally,
       );
     });
+
+    test('warnUnexpected path does not throw with verbose enabled', () {
+      // Arrange
+      JsonSentinel.silence(verbose: true);
+
+      // Act & Assert — covers the verbose developer.log on the warning path
+      expect(
+        () => JsonSentinel.validateBatch(
+          jsons: [
+            {'id': 1, 'extra': 'x'},
+          ],
+          expectedTypes: schema,
+          warnUnexpected: true,
+          context: 'Model',
+        ),
+        returnsNormally,
+      );
+    });
   });
 
   group('JsonSentinel.validateBatch — redaction —', () {
@@ -755,6 +773,289 @@ void main() {
       // Assert — 'id' is not in redactKeys; its value must appear in full.
       final previews = capturedExtras.first!['item_previews'] as List<String>;
       expect(previews.first, contains('99'));
+    });
+  });
+
+  // endregion
+
+  // region warnUnexpected — consolidated warning log, isValid unaffected.
+
+  group('JsonSentinel.validateBatch — warnUnexpected —', () {
+    setUp(JsonSentinel.resetLoggerForTesting);
+
+    test('should return isValid true when some items have unexpected keys and warnUnexpected is true', () {
+      // Arrange
+      JsonSentinel.silence();
+
+      // Act
+      final result = JsonSentinel.validateBatch(
+        jsons: [
+          {'id': 1, 'extra': 'x'},
+          {'id': 2},
+        ],
+        expectedTypes: {
+          'id': [int],
+        },
+        warnUnexpected: true,
+        context: 'UserRecord',
+      );
+
+      // Assert
+      expect(result.isValid, isTrue);
+    });
+
+    test('should emit one consolidated warning log listing all items with unexpected keys', () {
+      // Arrange
+      JsonSentinel.configure((message, {error, stackTrace, extras, escalate}) {
+        logs.add(message);
+      });
+
+      // Act
+      JsonSentinel.validateBatch(
+        jsons: [
+          {'id': 1, 'extra': 'x'},
+          {'id': 2},
+          {'id': 3, 'another': 'y'},
+        ],
+        expectedTypes: {
+          'id': [int],
+        },
+        warnUnexpected: true,
+        context: 'UserRecord',
+      );
+
+      // Assert — one warning log covering items 0 and 2
+      expect(logs.length, 1);
+      expect(logs.first, contains('warning'));
+      expect(logs.first, contains('Item 0'));
+      expect(logs.first, contains('Item 2'));
+      expect(logs.first, isNot(contains('Item 1')));
+    });
+
+    test('should not emit any log when no items have unexpected keys', () {
+      // Arrange
+      JsonSentinel.configure((message, {error, stackTrace, extras, escalate}) {
+        logs.add(message);
+      });
+
+      // Act
+      JsonSentinel.validateBatch(
+        jsons: [
+          {'id': 1},
+          {'id': 2},
+        ],
+        expectedTypes: {
+          'id': [int],
+        },
+        warnUnexpected: true,
+        context: 'UserRecord',
+      );
+
+      // Assert
+      expect(logs, isEmpty);
+    });
+
+    test('should emit two separate logs when batch has both failures and warnings', () {
+      // Arrange — item 0 has unexpected key (warning), item 1 is missing required key (error)
+      JsonSentinel.configure((message, {error, stackTrace, extras, escalate}) {
+        logs.add(message);
+      });
+
+      // Act
+      final result = JsonSentinel.validateBatch(
+        jsons: [
+          {'id': 1, 'extra': 'x'},
+          {'name': 'Alice'},
+        ],
+        expectedTypes: {
+          'id': [int],
+        },
+        warnUnexpected: true,
+        context: 'UserRecord',
+      );
+
+      // Assert
+      expect(result.isValid, isFalse);
+      expect(logs.length, 2);
+      expect(logs.any((String m) => m.contains('warning')), isTrue);
+      expect(logs.any((String m) => m.contains('failed')), isTrue);
+    });
+
+    test('should always pass escalate false for the warning log', () {
+      // Arrange
+      JsonSentinel.configure((message, {error, stackTrace, extras, escalate}) {
+        logs.add(message);
+        escalations.add(escalate);
+      });
+
+      // Act
+      JsonSentinel.validateBatch(
+        jsons: [
+          {'id': 1, 'extra': 'x'},
+        ],
+        expectedTypes: {
+          'id': [int],
+        },
+        warnUnexpected: true,
+        escalate: true,
+        context: 'UserRecord',
+      );
+
+      // Assert — one warning log with escalate: false
+      expect(logs.length, 1);
+      expect(escalations.first, isFalse);
+    });
+
+    test('should throw AssertionError when both strict and warnUnexpected are true', () {
+      // Arrange — logger state does not matter; assert fires before any log call
+      // Act & Assert
+      expect(
+        () => JsonSentinel.validateBatch(
+          jsons: [
+            {'id': 1, 'extra': 'x'},
+          ],
+          expectedTypes: {
+            'id': [int],
+          },
+          strict: true,
+          warnUnexpected: true,
+          context: 'UserRecord',
+        ),
+        throwsA(isA<AssertionError>()),
+      );
+    });
+
+    test('should use singular "key" in warning message when item has exactly one unexpected key', () {
+      // Arrange
+      JsonSentinel.configure((message, {error, stackTrace, extras, escalate}) {
+        logs.add(message);
+      });
+
+      // Act
+      JsonSentinel.validateBatch(
+        jsons: [
+          {'id': 1, 'extra': 'x'},
+        ],
+        expectedTypes: {
+          'id': [int],
+        },
+        warnUnexpected: true,
+        context: 'UserRecord',
+      );
+
+      // Assert — "(1 unexpected key)" includes the closing paren, ruling out the plural form
+      expect(logs.first, contains('(1 unexpected key)'));
+      expect(logs.first, isNot(contains('1 unexpected keys')));
+    });
+  });
+
+  // endregion
+
+  // region Per-field validators — all items validated, one log entry.
+
+  group('JsonSentinel.validateBatch — validators —', () {
+    setUp(JsonSentinel.resetLoggerForTesting);
+
+    test('should return isValid true when all item validators pass', () {
+      // Arrange
+      JsonSentinel.configure((message, {error, stackTrace, extras, escalate}) {
+        logs.add(message);
+      });
+
+      // Act
+      final result = JsonSentinel.validateBatch(
+        jsons: [
+          {'status': 'active'},
+          {'status': 'inactive'},
+        ],
+        expectedTypes: {
+          'status': [String],
+        },
+        validators: {
+          'status': (Object? v) => ['active', 'inactive'].contains(v),
+        },
+        context: 'OrderRecord',
+      );
+
+      // Assert
+      expect(result.isValid, isTrue);
+      expect(logs, isEmpty);
+    });
+
+    test('should include failing validator items in failureIndices', () {
+      // Arrange
+      JsonSentinel.configure((message, {error, stackTrace, extras, escalate}) {
+        logs.add(message);
+      });
+
+      // Act
+      final result = JsonSentinel.validateBatch(
+        jsons: [
+          {'litres': 5},
+          {'litres': -1},
+          {'litres': 3},
+        ],
+        expectedTypes: {
+          'litres': [int],
+        },
+        validators: {'litres': (Object? v) => (v as num) > 0},
+        context: 'OrderRecord',
+      );
+
+      // Assert
+      expect(result.isValid, isFalse);
+      expect(result.failureIndices, [1]);
+    });
+
+    test('should list validator failure for each failing item in one consolidated log', () {
+      // Arrange
+      JsonSentinel.configure((message, {error, stackTrace, extras, escalate}) {
+        logs.add(message);
+      });
+
+      // Act
+      JsonSentinel.validateBatch(
+        jsons: [
+          {'status': 'invalid'},
+          {'status': 'active'},
+        ],
+        expectedTypes: {
+          'status': [String],
+        },
+        validators: {'status': (Object? v) => v == 'active'},
+        context: 'OrderRecord',
+      );
+
+      // Assert — one log covering item 0
+      expect(logs.length, 1);
+      expect(logs.first, contains('Item 0'));
+      expect(logs.first, contains('failed custom validation'));
+    });
+
+    test('should skip validator for absent optional key across items', () {
+      // Arrange
+      JsonSentinel.configure((message, {error, stackTrace, extras, escalate}) {
+        logs.add(message);
+      });
+
+      // Act
+      final result = JsonSentinel.validateBatch(
+        jsons: [
+          {'id': 1},
+          {'id': 2, 'tag': 'valid'},
+        ],
+        expectedTypes: {
+          'id': [int],
+          'tag': [String],
+        },
+        optional: {'tag'},
+        validators: {'tag': (Object? v) => v == 'valid'},
+        context: 'OrderRecord',
+      );
+
+      // Assert — item 0 has no 'tag' (optional, skipped); item 1 has 'tag' = 'valid' (passes)
+      expect(result.isValid, isTrue);
+      expect(logs, isEmpty);
     });
   });
 
