@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.github/pull_request_template.md` — PR checklist aligned with CI requirements.
 - API documentation deployed to GitHub Pages at `https://igeetheron.github.io/json-sentinel/` on every push to `main`.
 - Codecov coverage reporting with badge; coverage collected on every CI run.
+- `validateList()` — validates a bare `List<dynamic>` returned directly from `jsonDecode`. Non-`Map` items at index N produce a `JsonValidationResult.failure` counted in `failureIndices` with a descriptive message, rather than throwing a cast error. Accepts the same optional parameters as `validateBatch()`, including `warnUnexpected`, `validators`, `optional`, `strict`, `escalate`, and `generatePreviews`. Compatible with `tryFromJson`-style guards via `batch.isValid` or `batch.failureIndices`.
+- `warnUnexpected` parameter (`bool`, default `false`) on `validate()`, `validateBatch()`, and `validateList()`: logs unexpected keys as warnings without failing validation — `result.isValid` remains `true`. Intended for APIs that add fields in minor versions so teams are notified of contract drift without breaking the app. Mutually exclusive with `strict` (asserted in debug mode); warning log entries always use `escalate: false`.
+- `validators` parameter (`Map<String, bool Function(Object?)>?`) on `validate()`, `validateBatch()`, and `validateList()`: per-key predicate functions for value-level checks run after type validation passes for each key. A predicate returning `false` adds a bullet error identifying the key. Predicates are skipped for absent optional keys and for keys that already failed type validation.
 
 ### Changed
 

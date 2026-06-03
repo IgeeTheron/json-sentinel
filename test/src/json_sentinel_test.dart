@@ -1426,5 +1426,450 @@ void main() {
     // endregion
   });
 
+  // region warnUnexpected — logs warning without failing isValid.
+
+  group('JsonSentinel.validate — warnUnexpected —', () {
+    late List<String> logs;
+    late List<Map<String, Object?>?> capturedExtras;
+    late List<bool?> escalations;
+
+    setUp(() {
+      logs = [];
+      capturedExtras = [];
+      escalations = [];
+      JsonSentinel.configure((message, {error, stackTrace, extras, escalate}) {
+        logs.add(message);
+        capturedExtras.add(extras);
+        escalations.add(escalate);
+      });
+    });
+
+    tearDown(JsonSentinel.resetLoggerForTesting);
+
+    test('should return isValid true when unexpected key is present and warnUnexpected is true', () {
+      // Act
+      final result = JsonSentinel.validate(
+        json: {'id': 1, 'extra': 'surprise'},
+        expectedTypes: {
+          'id': [int],
+        },
+        warnUnexpected: true,
+        context: 'UserRecord',
+      );
+
+      // Assert
+      expect(result.isValid, isTrue);
+    });
+
+    test('should emit one log entry containing "warning" when unexpected key is found', () {
+      // Act
+      JsonSentinel.validate(
+        json: {'id': 1, 'extra': 'surprise'},
+        expectedTypes: {
+          'id': [int],
+        },
+        warnUnexpected: true,
+        context: 'UserRecord',
+      );
+
+      // Assert
+      expect(logs.length, 1);
+      expect(logs.first, contains('warning'));
+      expect(logs.first, contains('[UserRecord]'));
+    });
+
+    test('should include the unexpected key name in the warning message', () {
+      // Act
+      JsonSentinel.validate(
+        json: {'id': 1, 'new_api_field': 'v2'},
+        expectedTypes: {
+          'id': [int],
+        },
+        warnUnexpected: true,
+        context: 'UserRecord',
+      );
+
+      // Assert
+      expect(logs.first, contains("'new_api_field'"));
+    });
+
+    test('should list all unexpected keys as bullets in one warning log when multiple are present', () {
+      // Act
+      JsonSentinel.validate(
+        json: {'id': 1, 'fieldA': 'x', 'fieldB': 'y'},
+        expectedTypes: {
+          'id': [int],
+        },
+        warnUnexpected: true,
+        context: 'UserRecord',
+      );
+
+      // Assert
+      expect(logs.length, 1);
+      expect(logs.first, contains("'fieldA'"));
+      expect(logs.first, contains("'fieldB'"));
+    });
+
+    test('should use singular "key" in warning count for one unexpected key', () {
+      // Act
+      JsonSentinel.validate(
+        json: {'id': 1, 'extra': 'x'},
+        expectedTypes: {
+          'id': [int],
+        },
+        warnUnexpected: true,
+        context: 'UserRecord',
+      );
+
+      // Assert
+      expect(logs.first, contains('1 unexpected key'));
+      expect(logs.first, isNot(contains('1 unexpected keys')));
+    });
+
+    test('should use plural "keys" in warning count for multiple unexpected keys', () {
+      // Act
+      JsonSentinel.validate(
+        json: {'id': 1, 'a': 1, 'b': 2},
+        expectedTypes: {
+          'id': [int],
+        },
+        warnUnexpected: true,
+        context: 'UserRecord',
+      );
+
+      // Assert
+      expect(logs.first, contains('2 unexpected keys'));
+    });
+
+    test('should not emit any log when there are no unexpected keys and warnUnexpected is true', () {
+      // Act
+      JsonSentinel.validate(
+        json: {'id': 1},
+        expectedTypes: {
+          'id': [int],
+        },
+        warnUnexpected: true,
+        context: 'UserRecord',
+      );
+
+      // Assert
+      expect(logs, isEmpty);
+    });
+
+    test('should not emit a warning log when warnUnexpected is false (default) and unexpected key is present', () {
+      // Act
+      final result = JsonSentinel.validate(
+        json: {'id': 1, 'extra': 'surprise'},
+        expectedTypes: {
+          'id': [int],
+        },
+        context: 'UserRecord',
+      );
+
+      // Assert
+      expect(result.isValid, isTrue);
+      expect(logs, isEmpty);
+    });
+
+    test('should include context key in warning log extras', () {
+      // Act
+      JsonSentinel.validate(
+        json: {'id': 1, 'extra': 'x'},
+        expectedTypes: {
+          'id': [int],
+        },
+        warnUnexpected: true,
+        context: 'UserRecord',
+      );
+
+      // Assert
+      expect(capturedExtras.first, isNotNull);
+      expect(capturedExtras.first!['context'], 'UserRecord');
+    });
+
+    test('should include json_preview key in warning log extras', () {
+      // Act
+      JsonSentinel.validate(
+        json: {'id': 1, 'extra': 'x'},
+        expectedTypes: {
+          'id': [int],
+        },
+        warnUnexpected: true,
+        context: 'UserRecord',
+      );
+
+      // Assert
+      expect(capturedExtras.first!.containsKey('json_preview'), isTrue);
+    });
+
+    test('should always pass escalate false for warning log regardless of call-site escalate value', () {
+      // Act
+      JsonSentinel.validate(
+        json: {'id': 1, 'extra': 'x'},
+        expectedTypes: {
+          'id': [int],
+        },
+        warnUnexpected: true,
+        escalate: true,
+        context: 'UserRecord',
+      );
+
+      // Assert — warning log always escalate: false; no error log emitted (isValid true)
+      expect(logs.length, 1);
+      expect(escalations.first, isFalse);
+    });
+
+    test('should throw AssertionError when both strict and warnUnexpected are true', () {
+      // Act & Assert
+      expect(
+        () => JsonSentinel.validate(
+          json: {'id': 1, 'extra': 'x'},
+          expectedTypes: {
+            'id': [int],
+          },
+          strict: true,
+          warnUnexpected: true,
+          context: 'UserRecord',
+        ),
+        throwsA(isA<AssertionError>()),
+      );
+    });
+
+    test('should emit both a warning log and an error log when unexpected keys and schema errors coexist', () {
+      // Arrange — unexpected key AND a missing required key
+      // Act
+      final result = JsonSentinel.validate(
+        json: {'extra': 'x'},
+        expectedTypes: {
+          'id': [int],
+        },
+        warnUnexpected: true,
+        context: 'UserRecord',
+      );
+
+      // Assert
+      expect(result.isValid, isFalse);
+      expect(logs.length, 2);
+      expect(logs.any((String m) => m.contains('warning')), isTrue);
+      expect(logs.any((String m) => m.contains('failed')), isTrue);
+    });
+
+    test('should not emit a log when warnUnexpected is true and validation fails without unexpected keys', () {
+      // Arrange — only a schema error, no unexpected keys
+      JsonSentinel.validate(
+        json: {'id': 'wrong'},
+        expectedTypes: {
+          'id': [int],
+        },
+        warnUnexpected: true,
+        context: 'UserRecord',
+      );
+
+      // Assert — only the failure log, no warning log
+      expect(logs.length, 1);
+      expect(logs.first, contains('failed'));
+      expect(logs.first, isNot(contains('warning')));
+    });
+
+    test('should emit verbose developer.log when unexpected keys are found and verbose is true', () {
+      // Arrange
+      JsonSentinel.resetLoggerForTesting();
+      JsonSentinel.configure(
+        (message, {error, stackTrace, extras, escalate}) {},
+        verbose: true,
+      );
+
+      // Act & Assert — should not throw
+      expect(
+        () => JsonSentinel.validate(
+          json: {'id': 1, 'extra': 'x'},
+          expectedTypes: {
+            'id': [int],
+          },
+          warnUnexpected: true,
+          context: 'UserRecord',
+        ),
+        returnsNormally,
+      );
+    });
+  });
+
+  // endregion
+
+  // region Per-field validators — value-level checks after type validation.
+
+  group('JsonSentinel.validate — validators —', () {
+    late List<String> logs;
+
+    setUp(() {
+      logs = [];
+      JsonSentinel.configure((message, {error, stackTrace, extras, escalate}) {
+        logs.add(message);
+      });
+    });
+
+    tearDown(JsonSentinel.resetLoggerForTesting);
+
+    test('should return isValid true when validator passes', () {
+      // Act
+      final result = JsonSentinel.validate(
+        json: {'status': 'active'},
+        expectedTypes: {
+          'status': [String],
+        },
+        validators: {'status': (Object? v) => v == 'active'},
+        context: 'OrderRecord',
+      );
+
+      // Assert
+      expect(result.isValid, isTrue);
+      expect(logs, isEmpty);
+    });
+
+    test('should return isValid false and log an error when validator fails', () {
+      // Act
+      final result = JsonSentinel.validate(
+        json: {'status': 'unknown'},
+        expectedTypes: {
+          'status': [String],
+        },
+        validators: {
+          'status': (Object? v) => ['active', 'inactive', 'pending'].contains(v),
+        },
+        context: 'OrderRecord',
+      );
+
+      // Assert
+      expect(result.isValid, isFalse);
+      expect(logs.length, 1);
+      expect(logs.first, contains("Key 'status' failed custom validation."));
+    });
+
+    test('should produce a bullet error identifying the key that failed custom validation', () {
+      // Act
+      JsonSentinel.validate(
+        json: {'litres': -5},
+        expectedTypes: {
+          'litres': [int],
+        },
+        validators: {'litres': (Object? v) => (v as num) > 0},
+        context: 'OrderRecord',
+      );
+
+      // Assert
+      expect(logs.first, contains("'litres'"));
+      expect(logs.first, contains('failed custom validation'));
+    });
+
+    test('should skip validator for absent optional key', () {
+      // Act
+      final result = JsonSentinel.validate(
+        json: {'id': 1},
+        expectedTypes: {
+          'id': [int],
+          'tag': [String],
+        },
+        optional: {'tag'},
+        validators: {'tag': (Object? v) => false},
+        context: 'OrderRecord',
+      );
+
+      // Assert
+      expect(result.isValid, isTrue);
+      expect(logs, isEmpty);
+    });
+
+    test('should skip validator when key fails type validation', () {
+      // Arrange — type check fails; validator must NOT run (which would double-error)
+      var validatorCalled = false;
+
+      // Act
+      final result = JsonSentinel.validate(
+        json: {'status': 42},
+        expectedTypes: {
+          'status': [String],
+        },
+        validators: {
+          'status': (Object? v) {
+            validatorCalled = true;
+            return false;
+          },
+        },
+        context: 'OrderRecord',
+      );
+
+      // Assert
+      expect(result.isValid, isFalse);
+      expect(validatorCalled, isFalse);
+      expect(logs.first, contains('invalid type'));
+      expect(logs.first, isNot(contains('failed custom validation')));
+    });
+
+    test('should collect errors from multiple failing validators in one log entry', () {
+      // Act
+      final result = JsonSentinel.validate(
+        json: {'status': 'unknown', 'litres': -1},
+        expectedTypes: {
+          'status': [String],
+          'litres': [int],
+        },
+        validators: {
+          'status': (Object? v) => ['active', 'inactive'].contains(v),
+          'litres': (Object? v) => (v as num) > 0,
+        },
+        context: 'OrderRecord',
+      );
+
+      // Assert
+      expect(result.isValid, isFalse);
+      expect(logs.length, 1);
+      expect(logs.first, contains("'status'"));
+      expect(logs.first, contains("'litres'"));
+    });
+
+    test('should behave identically to no validators when validators map is null', () {
+      // Act
+      final result = JsonSentinel.validate(
+        json: {'id': 1},
+        expectedTypes: {
+          'id': [int],
+        },
+        validators: null,
+        context: 'OrderRecord',
+      );
+
+      // Assert
+      expect(result.isValid, isTrue);
+      expect(logs, isEmpty);
+    });
+
+    test('should not call validator for a key that is in the validators map but not in expectedTypes', () {
+      // Validators only run for keys iterated from expectedTypes; a validator for a
+      // key absent from expectedTypes is silently ignored.
+      var validatorCalled = false;
+
+      // Act
+      final result = JsonSentinel.validate(
+        json: {'id': 1, 'extra': 'value'},
+        expectedTypes: {
+          'id': [int],
+        },
+        validators: {
+          'extra': (Object? v) {
+            validatorCalled = true;
+            return false;
+          },
+        },
+        context: 'OrderRecord',
+      );
+
+      // Assert — validator was never called, result is valid
+      expect(validatorCalled, isFalse);
+      expect(result.isValid, isTrue);
+    });
+  });
+
+  // endregion
+
   // endregion
 }

@@ -15,7 +15,10 @@ catching malformed API responses early with a single, readable log entry per fai
 - Checks key existence and value types in one call
 - Nullable fields, union types (`[int, double]`), and optional fields all supported
 - Strict mode flags unexpected keys not declared in your schema
+- `warnUnexpected` — logs unknown keys as warnings without failing validation; ideal for APIs that add fields in minor versions
+- `validators` — per-key predicate functions for value-level checks (enums, ranges, non-empty strings) run after type validation passes
 - Single log entry per call listing every problem as a bullet — nothing hidden by an early return
+- **`validateList()`** — validates a bare `List<dynamic>` from `jsonDecode` directly; non-Map items produce descriptive failures rather than cast errors
 - **`validateBatch()`** — validates a list of payloads against a shared schema and emits one consolidated log entry for all failures, preventing duplicate error reporter events when processing list endpoints
 - `json_preview` attached to single-item extras; `item_previews` (`List<String>`) attached to batch extras — one JSON preview per failing item (opt out with `generatePreviews: false`)
 - `parentContext` — chain `validate()` calls across nested models to produce `[UserPage.data[2] > MetaModel]` log prefixes, pinpointing failures in paginated or deeply-nested responses without extra logging code
@@ -175,6 +178,58 @@ Sentry.captureMessage(message, hint: Hint.withMap({
 }));
 ```
 
+### List validation (bare JSON arrays)
+
+When an endpoint returns a bare JSON array — not a keyed envelope — use `validateList()`
+instead of manually casting and filtering before `validateBatch()`:
+
+```dart
+final batch = JsonSentinel.validateList(
+  raw: jsonDecode(response) as List<dynamic>, // directly from jsonDecode
+  expectedTypes: {'id': [int], 'name': [String]},
+  context: 'UserRecord',
+);
+```
+
+Non-`Map` items at index N produce a failure (`"Item N is not a Map<String, dynamic>."`)
+counted in `failureIndices` rather than throwing a cast error. Map items are validated
+identically to `validateBatch()`.
+
+#### `tryFromListJson` pattern
+
+```dart
+// Full-or-nothing: return null if any item fails.
+static List<UserRecord>? tryFromListJson(List<dynamic> raw) {
+  final batch = JsonSentinel.validateList(
+    raw: raw,
+    expectedTypes: {'id': [int], 'name': [String]},
+    context: 'UserRecord',
+  );
+  if (!batch.isValid) return null;
+  return [
+    for (final item in raw)
+      if (item is Map<String, dynamic>) UserRecord.fromValidJson(item),
+  ];
+}
+
+// Skip-bad-items: return only valid items using failureIndices.
+static List<UserRecord> fromValidListJson(List<dynamic> raw) {
+  final batch = JsonSentinel.validateList(
+    raw: raw,
+    expectedTypes: {'id': [int], 'name': [String]},
+    context: 'UserRecord',
+  );
+  return [
+    for (int i = 0; i < raw.length; i++)
+      if (!batch.failureIndices.contains(i) && raw[i] is Map<String, dynamic>)
+        UserRecord.fromValidJson(raw[i] as Map<String, dynamic>),
+  ];
+}
+```
+
+`validateList()` accepts the same optional parameters as `validateBatch()`: `optional`,
+`strict`, `warnUnexpected`, `validators`, `escalate`, and `generatePreviews`.
+
 ### Paginated responses
 
 When a list endpoint wraps items in an envelope object, use `validate()` for the outer
@@ -323,6 +378,56 @@ JsonSentinel.validate(
   strict: true,
 );
 ```
+
+### warnUnexpected — API drift without failures
+
+`strict: true` fails validation on any unknown key. `warnUnexpected: true` logs them as
+warnings instead — `result.isValid` remains `true` — so your app keeps working while you
+are notified of API contract drift:
+
+```dart
+// API v2 added 'created_at' — your v1 schema doesn't know about it yet.
+final result = JsonSentinel.validate(
+  json: responseMap,
+  expectedTypes: {'id': [int], 'status': [String]},
+  warnUnexpected: true,
+  context: 'UserRecord',
+);
+// [WARN] [UserRecord] JSON validation warning (1 unexpected key):
+//   • Unexpected key 'created_at'.
+// result.isValid → true
+```
+
+`warnUnexpected` and `strict` are mutually exclusive (asserted in debug mode). Warning
+logs always use `escalate: false`. Works identically in `validateBatch()` and
+`validateList()`, where warnings are consolidated into a single batch warning log.
+
+### Per-field validators
+
+`validators` accepts a `Map<String, bool Function(Object?)>` of predicate functions run
+after type validation passes for each key. Use it for lightweight domain constraints —
+allowed enum values, numeric ranges, non-empty strings:
+
+```dart
+final result = JsonSentinel.validate(
+  json: orderJson,
+  expectedTypes: {
+    'status': [String],
+    'quantity': [int],
+  },
+  validators: {
+    'status': (v) => const ['active', 'inactive', 'pending'].contains(v),
+    'quantity': (v) => (v as int) > 0,
+  },
+  context: 'OrderRecord',
+);
+// [WARN] [OrderRecord] JSON validation failed (2 errors):
+//   • Key 'status' failed custom validation.
+//   • Key 'quantity' failed custom validation.
+```
+
+Predicates are skipped for absent optional keys and for keys that already failed type
+validation. Works identically in `validateBatch()` and `validateList()`.
 
 ### Redaction
 

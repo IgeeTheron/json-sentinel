@@ -145,10 +145,22 @@ class JsonSentinel {
   ///
   /// When [strict] is `true`, keys present in [json] but absent from
   /// [expectedTypes] are reported as errors. Defaults to `false`.
+  /// Mutually exclusive with [warnUnexpected].
+  ///
+  /// When [warnUnexpected] is `true`, keys present in [json] but absent from
+  /// [expectedTypes] are logged as warnings without failing validation —
+  /// [JsonValidationResult.isValid] remains `true`. Mutually exclusive with
+  /// [strict]; asserted in debug mode.
+  ///
+  /// [validators] is an optional map of per-key predicate functions run after
+  /// type validation passes for that key. Each predicate receives the field value
+  /// as [Object?] and must return `false` to fail. A failing predicate adds a
+  /// bullet error for the key. Predicates are skipped for absent optional keys
+  /// and for keys that already failed type validation.
   ///
   /// [escalate] is forwarded to the logger as a hint that this failure warrants
   /// elevated capture (e.g. a Sentry event rather than a breadcrumb).
-  /// Defaults to `false`.
+  /// Defaults to `false`. Warning logs always use `escalate: false`.
   ///
   /// [context] identifies the model in log output. Defaults to `'UnknownModel'`.
   ///
@@ -172,22 +184,48 @@ class JsonSentinel {
     required Map<String, List<Type?>?> expectedTypes,
     Set<String> optional = const <String>{},
     bool strict = false,
+    bool warnUnexpected = false,
     bool escalate = false,
     String context = 'UnknownModel',
     String? parentContext,
+    Map<String, bool Function(Object?)>? validators,
   }) {
     final StackTrace stackTrace = StackTrace.current;
+    assert(
+      !(strict && warnUnexpected),
+      'JsonSentinel.validate: strict and warnUnexpected are mutually exclusive — '
+      'use strict to fail on unexpected keys, or warnUnexpected to log without failing, not both.',
+    );
     final String effectiveContext = parentContext != null ? '$parentContext > $context' : context;
-    final List<String> errors = _validateCore(
+    final ({List<String> errors, List<String> warnings}) core = _validateCore(
       json: json,
       expectedTypes: expectedTypes,
       optional: optional,
       strict: strict,
+      warnUnexpected: warnUnexpected,
+      validators: validators,
     );
 
-    if (errors.isNotEmpty) {
-      final String count = '${errors.length} error${errors.length == 1 ? '' : 's'}';
-      final String bullets = errors.map((String e) => '  • $e').join('\n');
+    if (core.warnings.isNotEmpty) {
+      final String warnCount = '${core.warnings.length} unexpected key${core.warnings.length == 1 ? '' : 's'}';
+      final String warnBullets = core.warnings.map((String w) => '  • $w').join('\n');
+      _log(
+        '[$effectiveContext] JSON validation warning ($warnCount):\n$warnBullets',
+        stackTrace: stackTrace,
+        extras: <String, Object?>{'context': effectiveContext, 'json_preview': _jsonPreview(json)},
+        escalate: false,
+      );
+      if (_verbose) {
+        developer.log(
+          '[$effectiveContext] validate() warned — ${core.warnings.length} unexpected key(s).',
+          name: 'JsonSentinel',
+        );
+      }
+    }
+
+    if (core.errors.isNotEmpty) {
+      final String count = '${core.errors.length} error${core.errors.length == 1 ? '' : 's'}';
+      final String bullets = core.errors.map((String e) => '  • $e').join('\n');
       _log(
         '[$effectiveContext] JSON validation failed ($count):\n$bullets',
         stackTrace: stackTrace,
@@ -196,14 +234,14 @@ class JsonSentinel {
       );
       if (_verbose) {
         developer.log(
-          '[$effectiveContext] validate() failed — ${errors.length} error(s).',
+          '[$effectiveContext] validate() failed — ${core.errors.length} error(s).',
           name: 'JsonSentinel',
         );
       }
-      return JsonValidationResult.failure(errors);
+      return JsonValidationResult.failure(core.errors);
     }
 
-    if (_verbose) {
+    if (_verbose && core.warnings.isEmpty) {
       developer.log(
         '[$effectiveContext] validate() passed — ${expectedTypes.length} key(s) checked.',
         name: 'JsonSentinel',
@@ -222,8 +260,13 @@ class JsonSentinel {
   /// Item indices in [BatchValidationResult.failureIndices] and in the log message are
   /// zero-based offsets into [jsons].
   ///
-  /// [optional], [strict], and [escalate] behave identically to [validate].
-  /// [context] identifies the model in log output. Defaults to `'UnknownModel'`.
+  /// [optional], [strict], [warnUnexpected], [validators], and [escalate] behave
+  /// identically to [validate]. [context] identifies the model in log output.
+  /// Defaults to `'UnknownModel'`.
+  ///
+  /// When [warnUnexpected] is `true`, a consolidated warning log is emitted after
+  /// validation listing every item that contained unexpected keys. This is separate
+  /// from the error log and does not affect [BatchValidationResult.isValid].
   ///
   /// When [generatePreviews] is `true` (the default), the logger receives an
   /// `'item_previews'` key in [extras] containing a truncated JSON string for each
@@ -254,19 +297,30 @@ class JsonSentinel {
     String context = 'UnknownModel',
     Set<String> optional = const <String>{},
     bool strict = false,
+    bool warnUnexpected = false,
     bool escalate = false,
     bool generatePreviews = true,
+    Map<String, bool Function(Object?)>? validators,
   }) {
     final StackTrace stackTrace = StackTrace.current;
+    assert(
+      !(strict && warnUnexpected),
+      'JsonSentinel.validateBatch: strict and warnUnexpected are mutually exclusive — '
+      'use strict to fail on unexpected keys, or warnUnexpected to log without failing, not both.',
+    );
     final List<JsonValidationResult> results = <JsonValidationResult>[];
+    final List<List<String>> itemWarnings = <List<String>>[];
     for (final Map<String, dynamic> json in jsons) {
-      final List<String> errors = _validateCore(
+      final ({List<String> errors, List<String> warnings}) core = _validateCore(
         json: json,
         expectedTypes: expectedTypes,
         optional: optional,
         strict: strict,
+        warnUnexpected: warnUnexpected,
+        validators: validators,
       );
-      results.add(errors.isEmpty ? JsonValidationResult.success : JsonValidationResult.failure(errors));
+      itemWarnings.add(core.warnings);
+      results.add(core.errors.isEmpty ? JsonValidationResult.success : JsonValidationResult.failure(core.errors));
     }
 
     final BatchValidationResult batch = BatchValidationResult.fromResults(results);
@@ -278,58 +332,247 @@ class JsonSentinel {
           name: 'JsonSentinel',
         );
       }
-      return batch;
-    }
+    } else {
+      final String itemsWord = jsons.length == 1 ? 'item' : 'items';
+      final StringBuffer buffer = StringBuffer(
+        '[$context] JSON batch validation failed (${batch.failureCount} of ${jsons.length} $itemsWord failed):',
+      );
+      for (final int i in batch.failureIndices) {
+        final List<String> errors = results[i].errors;
+        if (errors.isEmpty) continue;
+        final String errWord = errors.length == 1 ? 'error' : 'errors';
+        buffer.write('\n  Item $i (${errors.length} $errWord):');
+        for (final String e in errors) {
+          buffer.write('\n    • $e');
+        }
+      }
 
-    final String itemsWord = jsons.length == 1 ? 'item' : 'items';
-    final StringBuffer buffer = StringBuffer(
-      '[$context] JSON batch validation failed (${batch.failureCount} of ${jsons.length} $itemsWord failed):',
-    );
-    for (final int i in batch.failureIndices) {
-      final List<String> errors = results[i].errors;
-      if (errors.isEmpty) continue;
-      final String errWord = errors.length == 1 ? 'error' : 'errors';
-      buffer.write('\n  Item $i (${errors.length} $errWord):');
-      for (final String e in errors) {
-        buffer.write('\n    • $e');
+      _log(
+        buffer.toString(),
+        stackTrace: stackTrace,
+        extras: <String, Object?>{
+          'context': context,
+          'failure_count': batch.failureCount,
+          'total_count': jsons.length,
+          if (generatePreviews)
+            'item_previews': <String>[
+              for (final int i in batch.failureIndices) _jsonPreview(jsons[i]),
+            ],
+        },
+        escalate: escalate,
+      );
+
+      if (_verbose) {
+        developer.log(
+          '[$context] validateBatch() failed — ${batch.failureCount} of ${jsons.length} item(s) invalid.',
+          name: 'JsonSentinel',
+        );
       }
     }
 
-    _log(
-      buffer.toString(),
-      stackTrace: stackTrace,
-      extras: <String, Object?>{
-        'context': context,
-        'failure_count': batch.failureCount,
-        'total_count': jsons.length,
-        if (generatePreviews)
-          'item_previews': <String>[
-            for (final int i in batch.failureIndices) _jsonPreview(jsons[i]),
-          ],
-      },
-      escalate: escalate,
-    );
-
-    if (_verbose) {
-      developer.log(
-        '[$context] validateBatch() failed — ${batch.failureCount} of ${jsons.length} item(s) invalid.',
-        name: 'JsonSentinel',
+    final List<int> warningIndices = <int>[
+      for (int i = 0; i < itemWarnings.length; i++)
+        if (itemWarnings[i].isNotEmpty) i,
+    ];
+    if (warningIndices.isNotEmpty) {
+      final String itemsWord = jsons.length == 1 ? 'item' : 'items';
+      final StringBuffer wb = StringBuffer(
+        '[$context] JSON batch validation warning (${warningIndices.length} of ${jsons.length} $itemsWord had unexpected keys):',
       );
+      for (final int i in warningIndices) {
+        final List<String> ws = itemWarnings[i];
+        final String keyWord = ws.length == 1 ? 'key' : 'keys';
+        wb.write('\n  Item $i (${ws.length} unexpected $keyWord):');
+        for (final String w in ws) {
+          wb.write('\n    • $w');
+        }
+      }
+      _log(wb.toString(), stackTrace: stackTrace, extras: <String, Object?>{'context': context}, escalate: false);
+      if (_verbose) {
+        developer.log(
+          '[$context] validateBatch() warned — ${warningIndices.length} of ${jsons.length} item(s) had unexpected keys.',
+          name: 'JsonSentinel',
+        );
+      }
     }
 
     return batch;
   }
 
-  /// Runs key-existence and type checks on [json] against [expectedTypes].
+  /// Validates a bare [List<dynamic>] returned directly from [jsonDecode].
   ///
-  /// Returns the collected error strings without any logging side-effects.
-  static List<String> _validateCore({
+  /// Non-[Map] items at index N produce a [JsonValidationResult.failure] with the
+  /// message `"Item N is not a Map<String, dynamic>."` and are counted in
+  /// [BatchValidationResult.failureCount] and [BatchValidationResult.failureIndices].
+  /// Map items are validated against [expectedTypes] identically to [validateBatch].
+  ///
+  /// Use [BatchValidationResult.failureIndices] to skip invalid items when mapping
+  /// [raw] to model instances:
+  ///
+  /// ```dart
+  /// // Full-or-nothing: return null if any item fails.
+  /// static List<UserModel>? tryFromListJson(List<dynamic> raw) {
+  ///   final BatchValidationResult batch = JsonSentinel.validateList(
+  ///     raw: raw,
+  ///     expectedTypes: {'id': [int], 'name': [String]},
+  ///     context: 'UserModel',
+  ///   );
+  ///   if (!batch.isValid) return null;
+  ///   return [for (final Object? item in raw) if (item is Map<String, dynamic>) UserModel.fromJson(item)];
+  /// }
+  ///
+  /// // Skip-bad-items: return only the valid ones.
+  /// static List<UserModel> fromValidListJson(List<dynamic> raw) {
+  ///   final BatchValidationResult batch = JsonSentinel.validateList(
+  ///     raw: raw,
+  ///     expectedTypes: {'id': [int], 'name': [String]},
+  ///     context: 'UserModel',
+  ///   );
+  ///   return [
+  ///     for (int i = 0; i < raw.length; i++)
+  ///       if (!batch.failureIndices.contains(i) && raw[i] is Map<String, dynamic>)
+  ///         UserModel.fromJson(raw[i] as Map<String, dynamic>),
+  ///   ];
+  /// }
+  /// ```
+  ///
+  /// [optional], [strict], [warnUnexpected], [validators], [escalate], and
+  /// [generatePreviews] behave identically to [validateBatch].
+  ///
+  /// When [generatePreviews] is `true`, `item_previews` in the logger [extras]
+  /// contains a JSON preview for Map items and the literal string `'[non-Map item]'`
+  /// for non-Map items.
+  static BatchValidationResult validateList({
+    required List<dynamic> raw,
+    required Map<String, List<Type?>?> expectedTypes,
+    String context = 'UnknownModel',
+    Set<String> optional = const <String>{},
+    bool strict = false,
+    bool warnUnexpected = false,
+    bool escalate = false,
+    bool generatePreviews = true,
+    Map<String, bool Function(Object?)>? validators,
+  }) {
+    final StackTrace stackTrace = StackTrace.current;
+    assert(
+      !(strict && warnUnexpected),
+      'JsonSentinel.validateList: strict and warnUnexpected are mutually exclusive — '
+      'use strict to fail on unexpected keys, or warnUnexpected to log without failing, not both.',
+    );
+    final List<JsonValidationResult> results = <JsonValidationResult>[];
+    final List<List<String>> itemWarnings = <List<String>>[];
+    for (int i = 0; i < raw.length; i++) {
+      final Object? item = raw[i];
+      if (item is Map<String, dynamic>) {
+        final ({List<String> errors, List<String> warnings}) core = _validateCore(
+          json: item,
+          expectedTypes: expectedTypes,
+          optional: optional,
+          strict: strict,
+          warnUnexpected: warnUnexpected,
+          validators: validators,
+        );
+        itemWarnings.add(core.warnings);
+        results.add(core.errors.isEmpty ? JsonValidationResult.success : JsonValidationResult.failure(core.errors));
+      } else {
+        itemWarnings.add(<String>[]);
+        results.add(JsonValidationResult.failure(<String>['Item $i is not a Map<String, dynamic>.']));
+      }
+    }
+
+    final BatchValidationResult batch = BatchValidationResult.fromResults(results);
+
+    if (batch.failureCount == 0) {
+      if (_verbose) {
+        developer.log(
+          '[$context] validateList() passed — ${raw.length} item(s) checked.',
+          name: 'JsonSentinel',
+        );
+      }
+    } else {
+      final String itemsWord = raw.length == 1 ? 'item' : 'items';
+      final StringBuffer buffer = StringBuffer(
+        '[$context] JSON list validation failed (${batch.failureCount} of ${raw.length} $itemsWord failed):',
+      );
+      for (final int i in batch.failureIndices) {
+        final List<String> errors = results[i].errors;
+        if (errors.isEmpty) continue;
+        final String errWord = errors.length == 1 ? 'error' : 'errors';
+        buffer.write('\n  Item $i (${errors.length} $errWord):');
+        for (final String e in errors) {
+          buffer.write('\n    • $e');
+        }
+      }
+
+      _log(
+        buffer.toString(),
+        stackTrace: stackTrace,
+        extras: <String, Object?>{
+          'context': context,
+          'failure_count': batch.failureCount,
+          'total_count': raw.length,
+          if (generatePreviews)
+            'item_previews': <String>[
+              for (final int i in batch.failureIndices)
+                if (raw[i] is Map<String, dynamic>) _jsonPreview(raw[i] as Map<String, dynamic>) else '[non-Map item]',
+            ],
+        },
+        escalate: escalate,
+      );
+
+      if (_verbose) {
+        developer.log(
+          '[$context] validateList() failed — ${batch.failureCount} of ${raw.length} item(s) invalid.',
+          name: 'JsonSentinel',
+        );
+      }
+    }
+
+    final List<int> warningIndices = <int>[
+      for (int i = 0; i < itemWarnings.length; i++)
+        if (itemWarnings[i].isNotEmpty) i,
+    ];
+    if (warningIndices.isNotEmpty) {
+      final String itemsWord = raw.length == 1 ? 'item' : 'items';
+      final StringBuffer wb = StringBuffer(
+        '[$context] JSON list validation warning (${warningIndices.length} of ${raw.length} $itemsWord had unexpected keys):',
+      );
+      for (final int i in warningIndices) {
+        final List<String> ws = itemWarnings[i];
+        final String keyWord = ws.length == 1 ? 'key' : 'keys';
+        wb.write('\n  Item $i (${ws.length} unexpected $keyWord):');
+        for (final String w in ws) {
+          wb.write('\n    • $w');
+        }
+      }
+      _log(wb.toString(), stackTrace: stackTrace, extras: <String, Object?>{'context': context}, escalate: false);
+      if (_verbose) {
+        developer.log(
+          '[$context] validateList() warned — ${warningIndices.length} of ${raw.length} item(s) had unexpected keys.',
+          name: 'JsonSentinel',
+        );
+      }
+    }
+
+    return batch;
+  }
+
+  /// Runs key-existence, type, and custom-validator checks on [json] against [expectedTypes].
+  ///
+  /// Returns collected errors and warnings without any logging side-effects.
+  /// When [warnUnexpected] is `true`, unexpected keys are added to [warnings] rather than
+  /// [errors], leaving [errors] empty for those keys. [validators] predicates are run only
+  /// after the key passes type validation.
+  static ({List<String> errors, List<String> warnings}) _validateCore({
     required Map<String, dynamic> json,
     required Map<String, List<Type?>?> expectedTypes,
     Set<String> optional = const <String>{},
     bool strict = false,
+    bool warnUnexpected = false,
+    Map<String, bool Function(Object?)>? validators,
   }) {
     final List<String> errors = <String>[];
+    final List<String> warnings = <String>[];
 
     for (final MapEntry<String, List<Type?>?> entry in expectedTypes.entries) {
       final String key = entry.key;
@@ -358,6 +601,14 @@ class JsonSentinel {
           "Expected: ${expectedTypeList.join(', ')}; "
           "Actual: ${value.runtimeType}.",
         );
+        continue;
+      }
+
+      if (validators != null) {
+        final bool Function(Object?)? fn = validators[key];
+        if (fn != null && !fn(value)) {
+          errors.add("Key '$key' failed custom validation.");
+        }
       }
     }
 
@@ -367,9 +618,15 @@ class JsonSentinel {
           errors.add("Unexpected key '$key'.");
         }
       }
+    } else if (warnUnexpected) {
+      for (final String key in json.keys) {
+        if (!expectedTypes.containsKey(key)) {
+          warnings.add("Unexpected key '$key'.");
+        }
+      }
     }
 
-    return errors;
+    return (errors: errors, warnings: warnings);
   }
 
   /// Whether [val] matches [type].
