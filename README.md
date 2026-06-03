@@ -33,7 +33,7 @@ catching malformed API responses early with a single, readable log entry per fai
 
 ```yaml
 dependencies:
-  json_sentinel: ^0.3.0
+  json_sentinel: ^0.4.0
 ```
 
 ## Usage
