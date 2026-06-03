@@ -7,7 +7,7 @@ body:
     id: version
     attributes:
       label: json_sentinel version
-      placeholder: "0.3.0"
+      placeholder: "0.4.0"
     validations:
       required: true
 

@@ -6,8 +6,8 @@ Only the latest minor release on `main` receives security fixes.
 
 | Version | Supported |
 |---------|-----------|
-| 0.3.x   | ✅        |
-| < 0.3   | ❌        |
+| 0.4.x   | ✅        |
+| < 0.4   | ❌        |
 
 ## Reporting a vulnerability
 
