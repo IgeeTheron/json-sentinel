@@ -154,7 +154,7 @@ class JsonSentinel {
   ///
   /// [validators] is an optional map of per-key predicate functions run after
   /// type validation passes for that key. Each predicate receives the field value
-  /// as [Object?] and must return `false` to fail. A failing predicate adds a
+  /// as `Object?` and must return `false` to fail. A failing predicate adds a
   /// bullet error for the key. Predicates are skipped for absent optional keys
   /// and for keys that already failed type validation.
   ///
@@ -399,12 +399,14 @@ class JsonSentinel {
     return batch;
   }
 
-  /// Validates a bare [List<dynamic>] returned directly from [jsonDecode].
+  /// Validates each element in [raw] against [expectedTypes], treating non-`Map` items as failures.
   ///
-  /// Non-[Map] items at index N produce a [JsonValidationResult.failure] with the
-  /// message `"Item N is not a Map<String, dynamic>."` and are counted in
+  /// Accepts a `List<dynamic>` as returned directly by [jsonDecode], without
+  /// requiring manual casting or filtering before calling [validateBatch].
+  /// Non-`Map<String, dynamic>` items at index N produce a [JsonValidationResult.failure]
+  /// with the message `"Item N is not a Map<String, dynamic>."` and are counted in
   /// [BatchValidationResult.failureCount] and [BatchValidationResult.failureIndices].
-  /// Map items are validated against [expectedTypes] identically to [validateBatch].
+  /// `Map` items are validated against [expectedTypes] identically to [validateBatch].
   ///
   /// Use [BatchValidationResult.failureIndices] to skip invalid items when mapping
   /// [raw] to model instances:
